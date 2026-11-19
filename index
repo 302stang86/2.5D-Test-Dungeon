@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>2.5D Dungeon Room View</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #0d0d0f;
+      color: #ddd;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #3a3a40;
+      box-shadow: 0 0 25px rgba(0, 0, 0, 0.9);
+      image-rendering: pixelated;
+    }
+    .controls {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="gameCanvas" width="800" height="500"></canvas>
+  <div class="controls">
+    <strong>Controls:</strong> W / S to Move | A / D to Turn | Q / E to Strafe
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    const TEX_SIZE = 64;
+
+    // 1. EXACT 13x13 GRID MATCHING YOUR IMAGE
+    // 1 = Outer Stone Wall, 2 = Recessed Doorway (North, South, East, West at index 6), 0 = Floor
+    const roomMap = [,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+ ,
+      [1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1]
+    ];
+
+    // 2. THE TWO WALL TORCHES FROM YOUR IMAGE (Placed just above the East/West doorways)
+    const sprites = [
+      { x: 1.25, y: 5.5, type: 'torch' },
+      { x: 11.75, y: 5.5, type: 'torch' }
+    ];
+
+    // Player starts near the south-center facing North toward the top doorway
+    const player = {
+      x: 6.5,
+      y: 9.5,
+      dirX: 0,
+      dirY: -1,
+      planeX: 0.66,
+      planeY: 0,
+      moveSpeed: 0.055,
+      rotSpeed: 0.045
+    };
+
+    // 3. GENERATE PROCEDURAL TEXTURES MATCHING YOUR IMAGE'S PALETTE
+    function createTextures() {
+      const textures = {};
+
+      // Texture 1: Stone Wall Bricks (Warm grey-taupe stone blocks from your border)
+      const wallCanvas = document.createElement('canvas');
+      wallCanvas.width = wallCanvas.height = TEX_SIZE;
+      const wCtx = wallCanvas.getContext('2d');
+      wCtx.fillStyle = '#6e6862';
+      wCtx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+      // Draw brick pattern & stone noise
+      for (let y = 0; y < TEX_SIZE; y += 16) {
+        const offset = (y / 16) % 2 === 0 ? 0 : 16;
+        for (let x = -16; x < TEX_SIZE; x += 32) {
+          const shade = 95 + Math.floor(Math.random() * 25);
+          wCtx.fillStyle = `rgb(${shade + 6}, ${shade + 2}, ${shade - 4})`;
+          wCtx.fillRect(x + offset + 1, y + 1, 30, 14);
+        }
+      }
+      // Subtle grain
+      for (let i = 0; i < 600; i++) {
+        wCtx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.12)';
+        wCtx.fillRect(Math.random() * TEX_SIZE, Math.random() * TEX_SIZE, 2, 2);
+      }
+      textures[1] = wallCanvas;
+
+      // Texture 2: Dark Recessed Doorway Arch
+      const doorCanvas = document.createElement('canvas');
+      doorCanvas.width = doorCanvas.height = TEX_SIZE;
+      const dCtx = doorCanvas.getContext('2d');
+      dCtx.fillStyle = '#252629';
+      dCtx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+      dCtx.strokeStyle = '#55504a';
+      dCtx.lineWidth = 6;
+      dCtx.strokeRect(3, 3, TEX_SIZE - 6, TEX_SIZE);
+      textures[2] = doorCanvas;
+
+      // Texture 3: Square Grey Floor Tile (Matching your 11x11 floor slabs)
+      const floorCanvas = document.createElement('canvas');
+      floorCanvas.width = floorCanvas.height = TEX_SIZE;
+      const fCtx = floorCanvas.getContext('2d');
+      fCtx.fillStyle = '#4c4e52';
+      fCtx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+      for (let i = 0; i < 500; i++) {
+        fCtx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.08)';
+        fCtx.fillRect(Math.random() * TEX_SIZE, Math.random() * TEX_SIZE, 2, 2);
+      }
+      // Dark grout border around tile
+      fCtx.strokeStyle = '#232426';
+      fCtx.lineWidth = 3;
+      fCtx.strokeRect(0, 0, TEX_SIZE, TEX_SIZE);
+      textures.floorData = fCtx.getImageData(0, 0, TEX_SIZE, TEX_SIZE).data;
+
+      return textures;
+    }
+
+    const textures = createTextures();
+    const zBuffer = new Array(W);
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function rotatePlayer(angle) {
+      const oldDirX = player.dirX;
+      player.dirX = player.dirX * Math.cos(angle) - player.dirY * Math.sin(angle);
+      player.dirY = oldDirX * Math.sin(angle) + player.dirY * Math.cos(angle);
+      const oldPlaneX = player.planeX;
+      player.planeX = player.planeX * Math.cos(angle) - player.planeY * Math.sin(angle);
+      player.planeY = oldPlaneX * Math.sin(angle) + player.planeY * Math.cos(angle);
+    }
+
+    function update() {
+      const pad = 0.25;
+      if (keys['KeyW'] || keys['ArrowUp']) {
+        if (roomMap[Math.floor(player.y)][Math.floor(player.x + player.dirX * (player.moveSpeed + pad))] === 0)
+          player.x += player.dirX * player.moveSpeed;
+        if (roomMap[Math.floor(player.y + player.dirY * (player.moveSpeed + pad))][Math.floor(player.x)] === 0)
+          player.y += player.dirY * player.moveSpeed;
+      }
+      if (keys['KeyS'] || keys['ArrowDown']) {
+        if (roomMap[Math.floor(player.y)][Math.floor(player.x - player.dirX * (player.moveSpeed + pad))] === 0)
+          player.x -= player.dirX * player.moveSpeed;
+        if (roomMap[Math.floor(player.y - player.dirY * (player.moveSpeed + pad))][Math.floor(player.x)] === 0)
+          player.y -= player.dirY * player.moveSpeed;
+      }
+      if (keys['KeyE']) {
+        if (roomMap[Math.floor(player.y)][Math.floor(player.x + player.planeX * (player.moveSpeed + pad))] === 0)
+          player.x += player.planeX * player.moveSpeed;
+        if (roomMap[Math.floor(player.y + player.planeY * (player.moveSpeed + pad))][Math.floor(player.x)] === 0)
+          player.y += player.planeY * player.moveSpeed;
+      }
+      if (keys['KeyQ']) {
+        if (roomMap[Math.floor(player.y)][Math.floor(player.x - player.planeX * (player.moveSpeed + pad))] === 0)
+          player.x -= player.planeX * player.moveSpeed;
+        if (roomMap[Math.floor(player.y - player.planeY * (player.moveSpeed + pad))][Math.floor(player.x)] === 0)
+          player.y -= player.planeY * player.moveSpeed;
+      }
+      if (keys['KeyD'] || keys['ArrowRight']) rotatePlayer(player.rotSpeed);
+      if (keys['KeyA'] || keys['ArrowLeft']) rotatePlayer(-player.rotSpeed);
+    }
+
+    // 4. FLOOR & CEILING TEXTURE CASTING
+    function renderFloorAndCeiling() {
+      const imgData = ctx.createImageData(W, H);
+      const buf = imgData.data;
+      const floorData = textures.floorData;
+
+      const rayDirX0 = player.dirX - player.planeX;
+      const rayDirY0 = player.dirY - player.planeY;
+      const rayDirX1 = player.dirX + player.planeX;
+      const rayDirY1 = player.dirY + player.planeY;
+
+      for (let y = H / 2 + 1; y < H; y++) {
+        const p = y - H / 2;
+        const posZ = 0.5 * H;
+        const rowDistance = posZ / p;
+
+        const floorStepX = rowDistance * (rayDirX1 - rayDirX0) / W;
+        const floorStepY = rowDistance * (rayDirY1 - rayDirY0) / W;
+        let floorX = player.x + rowDistance * rayDirX0;
+        let floorY = player.y + rowDistance * rayDirY0;
+
+        // Warm torchlight & distance falloff
+        const shade = Math.max(0.18, Math.min(1, 1.15 - rowDistance / 13));
+
+        for (let x = 0; x < W; x++) {
+          const tx = Math.floor((floorX - Math.floor(floorX)) * TEX_SIZE) & (TEX_SIZE - 1);
+          const ty = Math.floor((floorY - Math.floor(floorY)) * TEX_SIZE) & (TEX_SIZE - 1);
+          floorX += floorStepX;
+          floorY += floorStepY;
+
+          const texIdx = (ty * TEX_SIZE + tx) * 4;
+          const floorPixelIdx = (y * W + x) * 4;
+          buf[floorPixelIdx]     = floorData[texIdx] * shade;
+          buf[floorPixelIdx + 1] = floorData[texIdx + 1] * shade;
+          buf[floorPixelIdx + 2] = floorData[texIdx + 2] * shade;
+          buf[floorPixelIdx + 3] = 255;
+
+          // Darker stone ceiling mirror
+          const ceilPixelIdx = ((H - y) * W + x) * 4;
+          buf[ceilPixelIdx]     = 26 * shade;
+          buf[ceilPixelIdx + 1] = 27 * shade;
+          buf[ceilPixelIdx + 2] = 32 * shade;
+          buf[ceilPixelIdx + 3] = 255;
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    // 5. WALL RAYCASTING + TORCH BILLBOARDS
+    function render() {
+      renderFloorAndCeiling();
+
+      // Cast Walls
+      for (let x = 0; x < W; x++) {
+        const cameraX = 2 * x / W - 1;
+        const rayDirX = player.dirX + player.planeX * cameraX;
+        const rayDirY = player.dirY + player.planeY * cameraX;
+
+        let mapX = Math.floor(player.x);
+        let mapY = Math.floor(player.y);
+
+        const deltaDistX = rayDirX === 0 ? 1e30 : Math.abs(1 / rayDirX);
+        const deltaDistY = rayDirY === 0 ? 1e30 : Math.abs(1 / rayDirY);
+
+        let stepX, stepY, sideDistX, sideDistY;
+        if (rayDirX < 0) { stepX = -1; sideDistX = (player.x - mapX) * deltaDistX; }
+        else { stepX = 1; sideDistX = (mapX + 1.0 - player.x) * deltaDistX; }
+        if (rayDirY < 0) { stepY = -1; sideDistY = (player.y - mapY) * deltaDistY; }
+        else { stepY = 1; sideDistY = (mapY + 1.0 - player.y) * deltaDistY; }
+
+        let hit = 0, side = 0;
+        while (hit === 0) {
