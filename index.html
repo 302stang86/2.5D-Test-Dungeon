@@ -47,11 +47,11 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <button data-hold="s" aria-label="Move backward">↓</button>
 <button data-hold="e" aria-label="Turn right">↷</button>
 <button id="interact">Interact</button>
-<button id="attack">Attack</button><button id="block">Block</button>
+<button id="punch">Punch</button>
 <button id="heal">Heal</button><button id="buy">Buy lockpick</button>
 <button id="reset">New layout</button>
 </div>
-<p class="hint">WASD to move, Q/E or ←/→ to turn, Space to interact, F to attack, B to block, H to heal, V to switch views. Drag the first-person view to look around.</p>
+<p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space to punch, H to heal, V to switch views. Drag the first-person view to look around.</p>
 </main>
 <script>
 'use strict';
@@ -59,7 +59,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 // Standalone layout code adapted from Stronghold Architect: dungeons.js (434bdd1), world.js (c840d8a), and room definitions.
 const DIRS=[[0,-1],[1,0],[0,1],[-1,0]];
 const LOCKPICK_ID=31, ITEMS={[LOCKPICK_ID]:{price:30}};
-const GRID=30, HOME={x:14,y:14}, MAX_LEVEL=20;
+const GRID=30;
 const TYPES=[
 ['Throne Room',0,0,0,[],'The heart of your keep. Produces 20 gold and 12 stone daily.'],
 ['Barracks',50,25,0,[],'Recruit guards. Each Barracks level unlocks one slot, up to five.'],
@@ -108,19 +108,13 @@ const DUNGEON_INTERIOR_ART=[
  'crypt','flooded-chamber','alchemy-lab','chapel','barracks','collapsed-hall','rune-sanctum'
 ];
 
-const DUNGEON_TIERS = [
- {id:'dungeon-low', name:'Forgotten Cellar', tier:'Low', chestCount:3, occupancy:.3, recommended:1, boss:'The Fallen Captain',
-  warning:'Light resistance. The Captain alternates shield and counterattack turns.',
-  rooms:[2,3,16,18], guard:'Restless Sentry', variant:1, guardLevel:1, health:.8, skill:.4,
-  reward:{gold:65,stone:30,food:20,rp:8}},
- {id:'dungeon-medium', name:'Buried Keep', tier:'Medium', chestCount:5, occupancy:.6, recommended:5, boss:'The Candlewick Witch',
-  warning:'Carry healing supplies. Find the vault key and extinguish the Witch’s three ward candles.',
-  rooms:[3,5,6,8,19], guard:'Candlewick Shadow', variant:2, guardLevel:3, health:1.05, skill:.65,
-  reward:{gold:145,stone:75,food:35,rp:25}},
- {id:'dungeon-high', name:'Hollow Citadel', tier:'High', chestCount:8, occupancy:.9, recommended:10, boss:'The Ironbound Demon',
-  warning:'Elite defenders. The Demon breaks its chains at half health. Use block when it charges.',
-  rooms:[3,4,7,9,18,19], guard:'Ironbound Sentinel', variant:3, guardLevel:7, health:1.3, skill:.85,
-  reward:{gold:300,stone:150,food:65,rp:60}}
+const DUNGEON_TIERS=[
+  {id:'dungeon-low',name:'Forgotten Cellar',crateCount:3,occupancy:.3,rooms:[2,3,16,18],
+    reward:{gold:65,stone:30,food:20,rp:8}},
+  {id:'dungeon-medium',name:'Buried Keep',crateCount:5,occupancy:.6,rooms:[3,5,6,8,19],
+    reward:{gold:145,stone:75,food:35,rp:25}},
+  {id:'dungeon-high',name:'Hollow Citadel',crateCount:8,occupancy:.9,rooms:[3,4,7,9,18,19],
+    reward:{gold:300,stone:150,food:65,rp:60}}
 ];
 
 
@@ -151,17 +145,11 @@ function generateDungeon(tier){
  // A leaf keeps the vault from blocking access to any other room.
  const deepest=Math.max(...rooms.map(room=>room.depth));
  const vault=pick(rooms.filter(room=>room.depth===deepest));
- const bossKey=roomKey(vault);
+ const vaultKey=roomKey(vault);
  vault.type=10;
  const sideRooms=rooms.filter(room=>room!==vault);
  const keyRoom=index>0?roomKey(pick(sideRooms.filter(room=>room.depth>=2))):null;
- const defenders={},caches={};
- const encounterPool=sideRooms.filter(room=>room!==first);
- for(let count=[5,10,20][index];count>0;count--){
-  const [room]=encounterPool.splice(roll(encounterPool.length),1);
-  defenders[roomKey(room)]={name:tier.guard,level:tier.guardLevel+roll(index+1),
-   variant:tier.variant,health:.45+index*.15,skill:tier.skill,damage:.65+index*.12};
- }
+ const caches={};
  const cachePool=[...sideRooms];
  for(let count=[7,12,18][index];count>0;count--){
   const [room]=cachePool.splice(roll(cachePool.length),1);
@@ -197,31 +185,26 @@ function generateDungeon(tier){
   else if(room.type===15)room.dungeonArt=pick(['crossroads-1','crossroads-2']);
   else if(room.type!==14)room.dungeonArt=pick(DUNGEON_INTERIOR_ART);
  }
- defenders[bossKey]={name:tier.boss,level:tier.recommended,variant:tier.variant,
-  health:tier.health,skill:tier.skill,damage:[.72,.9,1][index],boss:tier.id};
- const layout={version:DUNGEON_LAYOUT_VERSION,rulingName:tier.name,tiles,defenders,caches,bossKey,keyRoom,progress:null};
- placeDungeonChests(layout,tier);
+ const layout={version:DUNGEON_LAYOUT_VERSION,rulingName:tier.name,tiles,caches,vaultKey,keyRoom,progress:null};
+ placeDungeonCrates(layout,tier);
  return layout;
 }
 
-function placeDungeonChests(layout,tier){
- if(layout.chests)return false;
- const candidates=layout.tiles.filter(room=>room.type!==17&&![12,13,14,15].includes(room.type)&&roomKey(room)!==layout.bossKey);
- layout.chests={};
- for(let i=0;i<=tier.chestCount&&candidates.length;i++){
+function placeDungeonCrates(layout,tier){
+ if(layout.crates)return false;
+ const candidates=layout.tiles.filter(room=>room.type!==17&&![12,13,14,15].includes(room.type)&&roomKey(room)!==layout.vaultKey);
+ layout.crates={};
+ for(let i=0;i<=tier.crateCount&&candidates.length;i++){
   const [room]=candidates.splice(Math.floor(Math.random()*candidates.length),1);
   const locked=i===0;
-  layout.chests[roomKey(room)]={locked,gold:locked?ITEMS[LOCKPICK_ID].price*3:8+Math.floor(Math.random()*8)};
+  layout.crates[roomKey(room)]={locked,gold:locked?ITEMS[LOCKPICK_ID].price*3:8+Math.floor(Math.random()*8)};
  }
  return true;
 }
 
 
 const NAMES=["House Ashford", "House Blackthorn", "House Ravenshield", "House Ironwood", "House Valemont", "House Greywatch", "House Thornwick", "House Stormholt", "House Fairbourne", "House Embercrest", "House Wintermere", "House Goldwyck", "House Dunraven", "House Highmere", "House Redwyne", "House Stonehart", "House Wyrmwood", "House Silverbrook", "House Oakenshield", "House Nightford", "Clan Frosthelm", "Clan Wolfhearth", "Clan Stagmoor", "Clan Brackenfell", "House Kingsward", "House Bellgrave", "House Whitestone", "House Hawkridge", "The Iron Covenant", "The Order of Dawn"];
-const ri=n=>Math.floor(Math.random()*n),shuf=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=ri(i+1);[a[i],a[j]]=[a[j],a[i]]}return a};
-
-const PRINCE_NAMES=['Aldric','Bran','Cador','Dorian','Edric','Fenwick','Gawain','Hadrian','Ivor','Jorund','Kael','Leofric','Merek','Njal','Osmund','Percival','Rolf','Sigmund','Tancred','Ulric'];
-const SERVANT_NAMES=['Alda','Bram','Cedric','Dara','Edmund','Fenna','Gareth','Hilda','Ivo','Joran','Kelda','Lorcan','Maren','Nell','Osric','Petra','Quill','Rowan','Sela','Tobias'];
+const ri=n=>Math.floor(Math.random()*n);
 const EXTRA=[2,5,18,19,16,1];
 function layout(){
  const col=8+ri(8),tiles=[{x:col,y:23,type:17,rot:0,level:1},{x:col,y:22,type:15,rot:0,level:1},{x:col,y:21,type:16,rot:0,level:1},{x:col,y:20,type:0,rot:0,level:1}];
@@ -241,20 +224,11 @@ function layout(){
 }
 
 
-const fortFor=c=>Math.max(1,Math.min(5,1+Math.floor(Math.hypot(c.x-HOME.x,c.y-HOME.y)/4.2)+(c.profile===2?1:0)));
-const hostableTiles=(c)=>c.tiles.filter(t=>![0,12,13,14,15].includes(t.type)&&(t.type!==17||(c.fort||fortFor(c))>=2));
-function wantDefenders(c){return Math.min(hostableTiles(c).length,1+(c.fort||fortFor(c))+(c.profile===2?1:0))}
-function newDefender(c,key,offset){const L=Math.max(1,c.prince.level-offset);c.defenders[key]={name:SERVANT_NAMES[ri(SERVANT_NAMES.length)],level:L,variant:ri(4),offset}}
-function rival(id,p,name,arms){
- const c={id,x:p.x,y:p.y,rulingName:name,armsId:arms,owner:'rival',prince:{name:PRINCE_NAMES[ri(PRINCE_NAMES.length)],level:2,variant:ri(4)},tiles:layout(),defenders:{},treasury:{gold:120+ri(200),stone:60+ri(100),food:60+ri(100),rp:10+ri(30)},profile:ri(3)};
- c.fort=fortFor(c);c.prince.level=Math.min(MAX_LEVEL,Math.round(2+c.fort*1.5+.5));
- const hs=shuf(hostableTiles(c)).slice(0,Math.max(1,wantDefenders(c)-ri(2)));
- for(const t of hs)newDefender(c,t.x+','+t.y,ri(3));
- return c;
+function rival(){
+  return {rulingName:NAMES[ri(NAMES.length)],tiles:layout(),
+    treasury:{gold:120+ri(200),stone:60+ri(100),food:60+ri(100),rp:10+ri(30)}};
 }
 
-
-// Both views share the projected room grid and encounter state.
 const ROOM_SIZE=13, ROOM_SPACING=ROOM_SIZE+1;
 const ROOM_LEFT=Math.floor(ROOM_SIZE/2), ROOM_RIGHT=ROOM_SIZE-ROOM_LEFT;
 const ARCH_WIDTH=1, ARCH_HALF=ARCH_WIDTH/2;
@@ -262,7 +236,7 @@ const ARCH_LEFT=Math.floor(ARCH_HALF), ARCH_RIGHT=ARCH_WIDTH-ARCH_LEFT;
 const ROOM_CENTER=ROOM_LEFT+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
-let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
+let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,recoveredCache,turn;
 const canvas = document.querySelector('#view');
 const desktop=globalThis.matchMedia?.('(min-width: 900px) and (pointer: fine)').matches;
 if(desktop){ canvas.width=640; canvas.height=400; }
@@ -275,7 +249,7 @@ const buttons = [...document.querySelectorAll('[data-hold]')];
 const keys = new Set();
 const held = new Map();
 const player = {};
-let mode = 'eye', hasKey, escaped, drag, acidFields, smoothAcid=true;
+let mode = 'eye', hasKey, escaped, drag, roomLights, smoothAcid=true;
 const byId = id => document.getElementById(id);
 const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
@@ -293,7 +267,7 @@ const ROOM_STYLES={
   stone:['#625e59','#777069','bench'], hall:['#635f58','#82786c',null],
   entrance:['#635c54','#807465','banner'], storage:['#65574a','#756351','barrels'],
   cell:['#53565c','#6e6d72','cage'], cave:['#56564c','#666552','rubble'],
-  throne:['#665153','#786564','throne'], vault:['#665d48','#88775d','coffer'],
+  throne:['#665153','#786564','throne'], vault:['#665d48','#88775d',null],
   kitchen:['#705a48','#85674d','hearth'], library:['#594d49','#776459','books'],
   armory:['#575b60','#70757b','weapons'], war:['#644e49','#80665d','desk'], crypt:['#575963','#74747d','sarcophagus'],
   flooded:['#46606a','#63737a','pool'], arcane:['#564d65','#73647a','altar'],
@@ -316,7 +290,6 @@ function themeAt(x,y){
 }
 function decorateRoom(theme,x,y){
   if(theme.id==='acid'){
-    acidFields.set(cellKey(Math.floor(x/ROOM_SPACING),Math.floor(y/ROOM_SPACING)),bakeAcidLight(x,y));
     for(const [dx,dy] of [[-2,-2],[2,-2],[0,0],[-2,2],[2,2]]){
       actors.push({kind:'pillar',x:x+dx,y:y+dy,radius:.73,height:CEILING_HEIGHT});
       actors.push({kind:'spores',x:x+dx+.52,y:y+dy+.53,height:.61,lift:.12});
@@ -332,9 +305,8 @@ function decorateRoom(theme,x,y){
 function restart() {
   const fieldTest=locationSelect.value==='acid-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
-  acidFields=new Map();
   byId('acid-comparison').hidden=!fieldTest;
-  const layout = site ? generateDungeon(site) : rival('expedition',{x:16,y:14},NAMES[ri(NAMES.length)],'');
+  const layout = site ? generateDungeon(site) : rival();
   const grid = new Map(layout.tiles.map(tile => [roomKey(tile),tile]));
   const originX = Math.min(...layout.tiles.map(t=>t.x));
   const originY = Math.min(...layout.tiles.map(t=>t.y));
@@ -348,14 +320,14 @@ function restart() {
   doorVersion=0;
   ironKey=false;
   actors=[];
-  const bossKey=layout.bossKey ?? roomKey(layout.tiles.find(t=>t.type===0));
+  const vaultKey=layout.vaultKey ?? roomKey(layout.tiles.find(t=>t.type===0));
   if(site?.id==='dungeon-high' && !layout.tiles.some(t=>t.dungeonTrap==='acid')){
     const trap=layout.tiles.find(t=>t.dungeonTrap);
     if(trap) trap.dungeonTrap='acid';
   }
   const entrance=layout.tiles.find(t=>t.type===17);
   const center=t=>({x:(t.x-originX)*ROOM_SPACING+ROOM_CENTER+.5,y:(t.y-originY)*ROOM_SPACING+ROOM_CENTER+.5});
-  const boss=grid.get(bossKey);
+  const vaultRoom=grid.get(vaultKey);
   const production={0:['gold','stone'],2:['food'],3:['stone'],5:['rp'],10:['gold'],18:['gold'],19:['rp']};
   const producers={gold:0,stone:0,food:0,rp:0};
   for(const tile of layout.tiles) for(const kind of production[tile.type] ?? []) producers[kind]++;
@@ -382,7 +354,7 @@ function restart() {
       }
       const archX=cx+dx*boundary, archY=cy+dy*boundary;
       if(doors.has(cellKey(archX,archY))) continue;
-      const vault=(t===boss || neighbor===boss) && !!layout.keyRoom;
+      const vault=(t===vaultRoom || neighbor===vaultRoom) && !!layout.keyRoom;
       const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size/ARCH_WIDTH%4];
       const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
       for(let lane=-ARCH_LEFT;lane<ARCH_RIGHT;lane++){
@@ -394,35 +366,28 @@ function restart() {
       if(theme.id!=='acid') actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*.32,y:arch.y-dy*1.5+Math.abs(dx)*.32,lift:.38,height:.52});
     }
 
-    const defender=layout.defenders[key];
-    if(key===bossKey || defender){
-      const name=defender?.name ?? `Prince ${layout.prince.name}`;
-      const hp=key===bossKey ? (site ? Math.round(50*site.health) : 58) : (site ? 12+4*defender.level : 18+2*defender.level);
-      actors.push({kind:key===bossKey?'boss':'enemy',roomKey:key,name,x,y:y-(theme.id==='acid'?3.6:.37),height:.85,radius:.22,hp,maxHp:hp,round:0});
-    }
     const resourceKinds=production[t.type] ?? [];
-    const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
-      Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*(defender?.2:.1))])) : null;
-    const chest=layout.chests?.[key];
-    if(chest || loot){
+    const loot=key===vaultKey ? (site?.reward ?? {gold:35,stone:12,food:8,rp:4}) :
+      site ? layout.caches[key] : resourceKinds.length ?
+        Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*.1)])) : null;
+    const crate=layout.crates?.[key];
+    if(crate || loot){
       if(hall){
         room[cy][cx+1]='.';
         room[cy+1][cx+1]='.';
       }
       const inset=hall ? 1 : ROOM_RIGHT-1;
-      actors.push({kind:'chest',x:x+inset,y:y+inset,height:.38,radius:.31,roomKey:key,chest,loot});
+      actors.push({kind:'crate',x:x+inset,y:y+inset,height:.38,radius:.34,locked:!!crate?.locked,bonus:crate?.gold ?? 0,loot,mainCache:key===vaultKey});
     }
     if(layout.keyRoom===key) actors.push({kind:'key',x:x-(hall?0:.92),y:y+(hall?0:.76),height:.25});
     if(trapName){
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
     decorateRoom(theme,x,y);
-    if(theme.id!=='acid' && (t.type===17 || key===bossKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1))){
+    if(theme.id!=='acid' && (t.type===17 || key===vaultKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1))){
       actors.push({kind:'torch',x:x-(hall?.32:2.22),y:y-(hall?.32:1.83),lift:.38,height:.52});
     }
-    if(key===bossKey && site?.id==='dungeon-medium'){
-      for(const dx of [-.95,0,.95]) actors.push({kind:'ward',x:x+dx,y:y-1.15,height:.38});
-    }
+
   }
   // Mark a single layer of masonry around walkable space. The rest is map void.
   for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++) {
@@ -439,19 +404,21 @@ function restart() {
   }
   pillars=actors.filter(a=>a.kind==='pillar');
   torches=actors.filter(a=>a.kind==='torch');
+  roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
   health=100;
   lootBag={gold:0,stone:0,food:0,rp:0};
   purse=30;
   picks=0;
   potions=site?.id==='dungeon-high' ? 3 : 2;
-  hasKey=escaped=defeated=bossDown=riposte=false;
+  hasKey=escaped=defeated=recoveredCache=false;
+  punchTime=PUNCH_SECONDS;
+  stride=walkSway=0;
   turn=0;
   lastRender=undefined;
-  byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' : site
-    ? `${site.name} · Defeat ${site.boss}, then return to the entrance.`
-    : `${layout.rulingName} · Raid the keep, defeat Prince ${layout.prince.name}, and return to the gate.`;
+  byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
+    `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
   if(fieldTest) tell('Walk around the pillars and look toward the torches. Use Acid chamber finish to compare materials.');
-  else tell('Pick up the iron key ahead. Use Interact at doors and chests. '+(site?.warning ?? 'Watch for traps on the way to the throne.'));
+  else tell('Pick up the iron key ahead. Use F or Interact at doors and crates. Watch for traps.');
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -482,43 +449,37 @@ function interact() {
     turn++;
     return;
   }
-  const a=targetActor(['chest','key','iron-key','ward','exit']);
+  const a=targetActor(['crate','key','iron-key','exit']);
   switch(a?.kind){
-    case 'chest': {
-      if(actors.some(foe=>foe.kind==='enemy' && foe.roomKey===a.roomKey && !foe.done)){
-        tell('Defeat the room’s defender before taking the loot.');
+    case 'crate': {
+      if(a.locked && !picks && !ironKey && !hasKey){
+        tell('Locked crate. Use a key or buy a Lockpick Set at the entrance.');
         return;
       }
-      if(a.chest?.locked && !picks && !ironKey && !hasKey){
-        tell('Locked chest. Use a key or buy a Lockpick Set at the entrance.');
-        return;
-      }
-      if(a.chest?.locked && !ironKey && !hasKey) picks--;
+      if(a.locked && !ironKey && !hasKey) picks--;
       const contents={...a.loot};
-      if(a.chest) contents.gold=(contents.gold ?? 0)+a.chest.gold;
+      if(a.bonus) contents.gold=(contents.gold ?? 0)+a.bonus;
       collect(contents);
       a.done=true;
-      tell(`Collected ${Object.entries(contents).map(([kind,amount])=>amount+' '+kind).join(', ')}.`);
+      if(a.mainCache) recoveredCache=true;
+      const inventory=Object.entries(contents).map(([kind,amount])=>amount+' '+kind).join(', ');
+      tell(a.mainCache ? `Main supplies recovered (${inventory}). Return to the entrance.` : `Collected ${inventory}.`);
       break;
     }
     case 'iron-key':
       a.done=ironKey=true;
-      tell('Iron key collected. It opens ordinary locked doors and treasure chests.');
+      tell('Iron key collected. It opens ordinary locked doors and supply crates.');
       break;
     case 'key':
       a.done=hasKey=true;
       tell('Vault key recovered. Use it at the locked vault door.');
       break;
-    case 'ward':
-      a.done=true;
-      tell(actors.some(a=>a.kind==='ward'&&!a.done) ? 'One ward candle goes dark.' : 'The Witch’s ward is broken.');
-      break;
     case 'exit':
       escaped=true;
-      tell(bossDown ? 'Expedition complete. You returned with your loot.' : 'You withdrew safely with your loot.');
+      tell(recoveredCache ? 'Expedition complete. You returned with your loot.' : 'You withdrew safely with your loot.');
       break;
     default:
-      tell('Move closer to a chest, key, candle, or the entrance marker.');
+      tell('Move closer to a crate, key, or the entrance marker.');
   }
   turn++;
 }
@@ -530,37 +491,6 @@ function hurt(damage) {
     for(const kind of Object.keys(lootBag)) lootBag[kind]=0;
     tell('You were defeated and lost the expedition loot. Restart to try a new layout.');
   }
-}
-
-function fight(blocking=false) {
-  if(escaped || defeated) return;
-  const foe=targetActor(['enemy','boss']);
-  if(!foe) { tell('Move closer and face a defender to fight.'); return; }
-  const boss=foe.kind==='boss' ? site?.id : null;
-  const shield=boss==='dungeon-low' && foe.round%2===0;
-  const wards=boss==='dungeon-medium' ? actors.filter(a=>a.kind==='ward'&&!a.done).length : 0;
-  const charge=boss==='dungeon-high' && foe.hp<=foe.maxHp/2 && foe.round%2===0;
-  const damage=blocking ? 0 : Math.max(1,(riposte ? 23 : 16)-(shield ? 7 : 0)-wards*5);
-  foe.hp=Math.max(0,foe.hp-damage);
-  turn++;
-  riposte=blocking;
-  if(!foe.hp){
-    foe.done=true;
-    if(foe.kind==='boss'){
-      bossDown=true;
-      collect(site?.reward ?? {gold:35,stone:12,food:8,rp:4});
-      tell(`${foe.name} fell. Return to the entrance to secure your loot.`);
-    } else tell(`${foe.name} defeated.`);
-    return;
-  }
-  foe.round++;
-  const base=foe.kind==='boss' ? 11 : 5;
-  const incoming=blocking ? 1 : base+(charge ? 10 : 0)+(shield ? 0 : boss==='dungeon-low' ? 3 : 0);
-  const next= boss==='dungeon-low' ? (foe.round%2===0?' Shield raised.':' Counterattack stance.') :
-    boss==='dungeon-high' && foe.hp<=foe.maxHp/2 ? (foe.round%2===0?' The Demon winds up a charge.':' The Demon has broken its chains.') :
-    wards ? ` ${wards} ward candles protect the Witch.` : '';
-  tell(`${foe.name} · ${foe.hp}/${foe.maxHp} HP. ${blocking?'Blocked. Next strike is stronger.':`Hit for ${damage}.`} Took ${incoming}.${next}`);
-  hurt(incoming);
 }
 
 function buyPick(){
@@ -627,7 +557,7 @@ function canStand(x,y) {
       if (solid(col,row)) return false;
     }
   }
-  return !actors.some(a => (!a.done || a.kind==='chest') && a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r);
+  return !actors.some(a => (!a.done || a.kind==='crate') && a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r);
 }
 
 // Grid traversal returns perpendicular depth when given a camera-plane ray.
@@ -822,24 +752,38 @@ const walls = {
     }
   })
 };
-const sprites = {
-  chest:surface(24,16,rect => {
-    rect('#402619',1,4,22,12); rect('#ae6635',2,2,20,6);
-    rect('#77442b',2,9,20,6); rect('#daa553',4,2,2,13);
-    rect('#daa553',18,2,2,13); rect('#f1cd7e',10,7,4,4);
-  }),
-  opened:surface(24,16,rect => {
-    rect('#a96236',1,0,22,5); rect('#462819',1,6,22,10);
-    rect('#bc8050',1,6,22,2); rect('#daa553',4,8,2,7);
-    rect('#daa553',18,8,2,7);
-  }),
-  guard:surface(20,34,rect => {
-    rect('#242935',4,24,5,10); rect('#242935',11,24,5,10);
-    rect('#66382e',3,11,14,15); rect('#85918d',3,12,3,5);
-    rect('#85918d',14,12,3,5); rect('#c49b70',7,5,7,6);
-    rect('#777d82',6,1,9,5); rect('#353631',4,22,12,3);
-    rect('#e1b672',9,22,3,3); rect('#b1a786',1,15,2,17);
-  }),
+function crateSprite(opened=false,locked=false){
+  return surface(64,36,rect=>{
+    rect('#1a211a',3,14,58,21);
+    rect('#586147',4,15,55,17);
+    rect('#71795a',7,16,47,3);
+    rect('#3d4633',8,22,46,6);
+    rect('#6d7758',7,30,47,2);
+    for(const x of [6,52]){
+      rect('#283126',x,15,5,17);
+      rect('#778367',x+1,16,2,14);
+    }
+    rect('#252d23',24,22,17,5);
+    rect('#c0c2a1',28,23,10,1);
+    if(opened){
+      rect('#2b3629',5,3,53,12);
+      rect('#687451',8,5,47,7);
+      rect('#111a13',9,12,44,5);
+    } else {
+      rect('#737d5c',3,9,58,8);
+      rect('#9a9d78',6,9,51,2);
+      rect('#37422e',4,15,55,2);
+      for(const x of [14,45]) rect('#a1a490',x,14,5,7);
+      if(locked){
+        rect('#252721',29,16,7,7);
+        rect('#b9a36f',30,18,5,4);
+      }
+    }
+  });
+}
+
+const sprites={
+  crate:crateSprite(), opened:crateSprite(true), lockedCrate:crateSprite(false,true),
   pillar:surface(20,40,(rect,g) => {
     const gradient=g.createLinearGradient(3,0,17,0);
     gradient.addColorStop(0,'#484044'); gradient.addColorStop(.45,'#a3998f'); gradient.addColorStop(1,'#4d4445');
@@ -857,26 +801,10 @@ const sprites = {
     rect('#ffe298',6,6,3,7);
   })
 };
-function defenderSprite(color,trim) {
-  return surface(32,40,rect => {
-    rect('#2a1d15',10,29,5,10); rect('#2a1d15',18,29,5,10);
-    rect(color,8,14,17,17);
-    rect(color,4,16,4,11); rect(color,25,16,4,11);
-    rect('#e0b18c',4,27,4,3); rect('#e0b18c',25,27,4,3);
-    rect(trim,8,24,17,3); rect(trim,15,14,3,10);
-    rect('#e0b18c',11,6,11,9); rect('#4a4e54',10,3,13,5);
-    rect('#27221d',13,9,2,2); rect('#27221d',18,9,2,2);
-  });
-}
-sprites.enemy=defenderSprite('#923d40','#a4a2a3');
-sprites.boss=defenderSprite('#584373','#e3bb67');
 sprites.key=surface(24,12,rect=>{
   rect('#d9a749',2,1,8,9); rect('#654724',4,3,4,4); rect('#ffd46c',9,4,13,3); rect('#d9a749',18,6,4,4);
 });
 sprites['iron-key']=sprites.key;
-sprites.ward=surface(16,24,rect=>{
-  rect('#9b6e49',3,21,10,3); rect('#e4c68b',6,9,4,13); rect('#ff781e',6,1,4,8); rect('#fff4a2',7,4,2,6);
-});
 sprites.trap=surface(32,8,rect=>{
   rect('#512826',0,2,32,6);
   for(let x=1;x<32;x+=5) rect('#a48570',x,2,2,4);
@@ -892,7 +820,6 @@ const PROP_ART={
   cage:['#4b4e56','#ada8a2',[[2,5,28,3],[2,28,28,3],[3,7,2,21],[9,7,2,21],[15,7,2,21],[21,7,2,21],[27,7,2,21]]],
   rubble:['#51574e','#888c77',[[2,21,9,9],[10,16,11,14],[21,20,9,10],[13,11,5,7]]],
   throne:['#772f3b','#bc985e',[[9,2,14,22],[7,20,18,7],[4,17,4,10],[24,17,4,10],[6,27,5,4],[21,27,5,4]]],
-  coffer:['#56442d','#bf9b59',[[3,11,26,17],[5,8,22,6],[6,24,20,3],[14,15,4,5]]],
   hearth:['#736761','#e97f41',[[3,8,26,22],[7,14,18,14],[12,18,9,9],[15,14,5,11]]],
   books:['#5c4132','#be9468',[[3,4,26,26],[5,11,22,2],[5,20,22,2],[7,5,4,6],[14,13,3,7],[20,22,5,7]]],
   weapons:['#5a514a','#c3b7a2',[[3,8,26,3],[3,26,26,3],[6,4,2,22],[15,7,2,19],[24,3,2,23],[4,17,23,2]]],
@@ -923,19 +850,21 @@ sprites.spores=surface(48,48,rect=>{
 
 function spriteFor(actor) {
   if(actor.kind==='furnishing') return roomProps[actor.art];
-  return sprites[actor.kind==='chest' && actor.done ? 'opened' : actor.kind];
+  return actor.kind==='crate' ? sprites[actor.done?'opened':actor.locked?'lockedCrate':'crate'] : sprites[actor.kind];
 }
 function visibleActor(actor) {
-  return !actor.done || actor.kind==='chest';
+  return !actor.done || actor.kind==='crate';
 }
 // Pilot materials use larger patterns and a world-aligned light map.
-const FIELD_SAMPLES=4;
+const FIELD_SAMPLES=2;
 const FIELD_LIGHT_SIZE=ROOM_SIZE*FIELD_SAMPLES+1;
-const fieldSlate=surface(256,256,rect=>{
-  rect('#50535a',0,0,256,256);
+function softSlabs(floorColor,design){
+  return surface(256,256,rect=>{
+  rect(floorColor,0,0,256,256);
   for(let row=0;row<2;row++){
     const y=row*128;
-    for(const x of (row===0?[0,84,177]:[0,117,203])){
+    const shift=design.id%4*7;
+    for(const x of (row===0?[0,84+shift,177-shift]:[0,117-shift,203+shift])){
       rect('#292c323b',x,y,3,128);
       rect('#b9b9bf22',x+3,y,2,128);
     }
@@ -943,41 +872,68 @@ const fieldSlate=surface(256,256,rect=>{
     rect('#b8bbc022',0,y+3,256,2);
   }
   for(let i=0;i<1800;i++) rect(i%2?'#1219230a':'#c5cbd20b',(i*137)%256,(i*97+Math.floor(i/13)*19)%256,1+i%4,1+i%3);
-}).getContext('2d').getImageData(0,0,256,256).data;
-const fieldMasonry=surface(512,128,rect=>{
-  rect('#3d3b39',0,0,512,128);
+  }).getContext('2d').getImageData(0,0,256,256).data;
+}
+function softMasonry(design,variant){
+  return surface(512,128,(rect,g)=>{
+  rect(design.mortar,0,0,512,128);
   const rows=[[87,134,110,181],[52,143,119,130,68],[128,101,172,111],[61,147,157,147]];
-  rows.forEach((blocks,row)=>{
+  rows.forEach((_,row)=>{
+    const blocks=rows[(row+variant)%rows.length];
     let left=0;
-    for(const [i,w] of blocks.entries()){
-      const light=99+((i*19+row*23)%24);
-      rect(`rgb(${light+7},${light+4},${light})`,left+1,row*32+1,w-2,30);
-      rect('#cbc7bb2b',left+2,row*32+2,w-4,2);
-      rect('#15161625',left+2,row*32+28,w-4,2);
+    const color=tone=>`rgb(${design.base.map(v=>Math.max(0,Math.min(255,v+tone))).join(',')})`;
+    const layout=design.pattern==='brick'||design.pattern==='thinSlate' ?
+      blocks.flatMap(w=>[Math.floor(w*.47),w-Math.floor(w*.47)]) : blocks;
+    for(const [i,w] of layout.entries()){
+      const y=row*32;
+      rect(color(((i*19+row*23+design.id*11+variant*13)%25)-12),left+1,y+1,w-2,30);
+      rect('#cbc7bb23',left+2,y+2,w-4,2);
+      rect('#15161629',left+2,y+28,w-4,2);
+      if((i+row+design.id)%7===0){
+        const x=left+w*.62;
+        g.strokeStyle='#211e1e55';
+        g.beginPath();g.moveTo(x,y+2);g.lineTo(x-5,y+13);g.lineTo(x+2,y+20);g.lineTo(x-2,y+27);g.stroke();
+      }
       left+=w;
     }
   });
   for(let i=0;i<1800;i++) rect(i%2?'#181c140c':'#aab48f10',(i*139)%512,(i*71+Math.floor(i/33)*13)%128,2+i%5,2);
-});
-function bakeAcidLight(cx,cy){
+  const band={bands:'#31363d',timber:'#644734',goldLine:'#b39656'}[design.accent];
+  if(band){
+    for(const y of [31,96]) rect(band,0,y,512,design.accent==='goldLine'?2:6);
+  }
+  });
+}
+const smoothWalls=WALL_DESIGNS.map(design=>[0,1,2].map(variant=>softMasonry(design,variant)));
+for(const theme of Object.values(themes)){
+  theme.smoothWalls=smoothWalls[theme.design.id-1];
+  theme.smoothFloor=softSlabs(theme.floorColor,theme.design);
+}
+function usesSmoothFinish(theme){ return theme.id!=='acid'||smoothAcid; }
+function bakeRoomLight(left,top){
+  left+=1; top+=1;
+  const nearby=torches.filter(t=>t.x>=left-.5 && t.x<=left+ROOM_SIZE+.5 && t.y>=top-.5 && t.y<=top+ROOM_SIZE+.5);
+  const columns=pillars.filter(p=>p.x>=left && p.x<=left+ROOM_SIZE && p.y>=top && p.y<=top+ROOM_SIZE);
   const values=new Float32Array(FIELD_LIGHT_SIZE**2);
   const warm=new Float32Array(values.length);
   for(let y=0;y<FIELD_LIGHT_SIZE;y++) for(let x=0;x<FIELD_LIGHT_SIZE;x++){
-    const dx=x/FIELD_SAMPLES-ROOM_SIZE/2,dy=y/FIELD_SAMPLES-ROOM_SIZE/2;
-    const edge=ROOM_SIZE/2-Math.max(Math.abs(dx),Math.abs(dy));
-    let shadow=Math.max(0,1-edge/1.25)*.12,tint=0;
-    for(const [px,py] of [[0,0],[-2,-2],[2,-2],[-2,2],[2,2]]){
-      const r=(dx-px)**2+(dy-py)**2;
-      shadow=Math.max(shadow,.34*Math.exp(-r/1.2));
-    }
-    for(const tx of [-6.08,6.08]) tint+=.8*Math.exp(-((dx-tx)**2+(dy+1)**2)/13);
+    const wx=left+x/FIELD_SAMPLES,wy=top+y/FIELD_SAMPLES;
+    const px=Math.floor(wx),py=Math.floor(wy);
+    const edgeX=wx-px,edgeY=wy-py;
+    const corner=Math.max(
+      solid(px-1,py)?1-edgeX:0,solid(px+1,py)?edgeX:0,
+      solid(px,py-1)?1-edgeY:0,solid(px,py+1)?edgeY:0);
+    let shadow=corner**2*.17,tint=0;
+    for(const pillar of columns) shadow=Math.max(shadow,.34*Math.exp(-((wx-pillar.x)**2+(wy-pillar.y)**2)/1.2));
+    for(const torch of nearby) tint+=.78*Math.exp(-((wx-torch.x)**2+(wy-torch.y)**2)/12);
     const i=y*FIELD_LIGHT_SIZE+x;
-    values[i]=1.15-shadow+.12*Math.sin((dx+cx)*.54+dy*.22)*Math.cos((dy+cy)*.62);
-    warm[i]=tint;
+    const stain=Math.sin(wx*.47+Math.cos(wy*.32))*Math.cos(wy*.52+Math.sin(wx*.29));
+    values[i]=1.14-shadow+stain*.15;
+    warm[i]=Math.min(1,tint);
   }
-  return {left:cx-ROOM_SIZE/2,top:cy-ROOM_SIZE/2,values,warm};
+  return {left,top,values,warm};
 }
-function sampleAcidLight(field,x,y,result){
+function sampleRoomLight(field,x,y,result){
   const px=Math.max(0,Math.min(FIELD_LIGHT_SIZE-1.001,(x-field.left)*FIELD_SAMPLES));
   const py=Math.max(0,Math.min(FIELD_LIGHT_SIZE-1.001,(y-field.top)*FIELD_SAMPLES));
   const ix=Math.floor(px),iy=Math.floor(py),fx=px-ix,fy=py-iy;
@@ -1001,18 +957,18 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
     const light = Math.max(.17, 1/(1+distance*.27))*(isFloor?1:.65);
     for (let x=0; x<width; x++) {
       const theme=themeAt(worldX,worldY);
-      const field=smoothAcid && theme.id==='acid' ?
-        acidFields.get(cellKey(Math.floor(worldX/ROOM_SPACING),Math.floor(worldY/ROOM_SPACING))) : null;
+      const field=usesSmoothFinish(theme) ?
+        roomLights[Math.floor(worldY/ROOM_SPACING)]?.[Math.floor(worldX/ROOM_SPACING)] : null;
       const index=(y*width+x)*4;
       if(field){
-        sampleAcidLight(field,worldX,worldY,lighting);
+        sampleRoomLight(field,worldX,worldY,lighting);
         const [ambient,warm]=lighting;
         const sample=(((Math.floor(worldY*96)&255)*256)+(Math.floor(worldX*96)&255))*4;
         const glow=warm*flicker*(isFloor?1:.4);
         const brightness=light*(ambient+glow*.8);
-        data[index]=fieldSlate[sample]*brightness+glow*34;
-        data[index+1]=fieldSlate[sample+1]*brightness+glow*16;
-        data[index+2]=fieldSlate[sample+2]*brightness+glow*5;
+        data[index]=theme.smoothFloor[sample]*brightness+glow*34;
+        data[index+1]=theme.smoothFloor[sample+1]*brightness+glow*16;
+        data[index+2]=theme.smoothFloor[sample+2]*brightness+glow*5;
       } else {
         const floor=theme.floor;
         const sample=(((Math.floor(worldY*64)&63)*64)+(Math.floor(worldX*64)&63))*4;
@@ -1077,12 +1033,14 @@ function renderFirstPerson(flicker) {
     depth[x] = d;
     const cell=tile(hit.x,hit.y), door=!column && cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
     const face=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02));
-    const pilot=smoothAcid && face.id==='acid';
+    const smooth=usesSmoothFinish(face);
     if(column) paintPillar(x,top,h,column);
     else {
-      const texture=door ? walls[door.status==='locked'?'G':'D'] : pilot ? fieldMasonry : face.wall;
+      const lateralOffset=hit.side==='x'?hit.x:hit.y;
+      const variant=(lateralOffset+(hit.side==='x'?1:0)+3)%3;
+      const texture=door ? walls[door.status==='locked'?'G':'D'] : smooth ? face.smoothWalls[variant] : face.wall;
       const worldU=hit.side==='x' ? player.y+dy*d : player.x+dx*d;
-      const source=pilot&&!door ? (Math.floor(worldU*108)&511) : Math.floor(hit.u*texture.width);
+      const source=smooth&&!door ? (Math.floor(worldU*108+lateralOffset*51)&511) : Math.floor(hit.u*texture.width);
       ctx.drawImage(texture,source,0,1,texture.height,x,top,1,h);
     }
     if(door){
@@ -1099,7 +1057,13 @@ function renderFirstPerson(flicker) {
     const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
     ctx.fillStyle = `rgba(13,10,11,${Math.max(0,1-light-torchLight*flicker)})`;
     ctx.fillRect(x,top,1,h);
-    if(pilot && torchLight>0){
+    if(smooth){
+      const stain=(Math.sin(hitX*.49)*Math.cos(hitY*.47)+1)*.075;
+      const color=face.id==='acid'||face.design.accent==='moss'?'34,52,27':'27,24,27';
+      ctx.fillStyle=`rgba(${color},${stain})`;
+      ctx.fillRect(x,top,1,h);
+    }
+    if(smooth && torchLight>0){
       ctx.fillStyle=`rgba(254,142,61,${torchLight*flicker*.72})`;
       ctx.fillRect(x,top,1,h);
     }
@@ -1107,7 +1071,8 @@ function renderFirstPerson(flicker) {
     for(const opening of openings[x].reverse()){
       const entry=Math.max(0,opening.distance-.02);
       const theme=themeAt(player.x+dx*entry,player.y+dy*entry);
-      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open');
+      const warm=usesSmoothFinish(theme) ? archWarmth(player.x+dx*entry,player.y+dy*entry)*flicker : 0;
+      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open',warm);
     }
   }
 
@@ -1138,11 +1103,17 @@ function renderFirstPerson(flicker) {
     }
     ctx.globalAlpha = 1;
   }
-  ctx.fillStyle='#f4e6c9';
-  ctx.fillRect(width/2-2,horizon,5,1);
-  ctx.fillRect(width/2,horizon-2,1,5);
+  drawPlayerArm();
+  drawCrosshair();
 }
-function paintArch(column,distance,lateral,theme,openLeaf=false){
+const archLighting=[0,0];
+function archWarmth(x,y){
+  const field=roomLights[Math.floor(y/ROOM_SPACING)]?.[Math.floor(x/ROOM_SPACING)];
+  if(!field) return 0;
+  sampleRoomLight(field,x,y,archLighting);
+  return archLighting[1];
+}
+function paintArch(column,distance,lateral,theme,openLeaf=false,warm=0){
   const scale=focal/Math.max(.01,distance);
   const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
   const {arch,base,accent}=theme.design;
@@ -1150,12 +1121,13 @@ function paintArch(column,distance,lateral,theme,openLeaf=false){
   const top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
   const lip=horizon-(crown-EYE_HEIGHT)*scale;
   const trim=Math.min(lip-top,(arch==='timber'?.09:.075)*scale);
-  const sample=Math.max(0,Math.min(theme.wall.width-1,Math.floor((lateral/ARCH_WIDTH+.5)*theme.wall.width)));
-  const cut=(lip-top)/(CEILING_HEIGHT*scale)*theme.wall.height;
-  if(cut>0) ctx.drawImage(theme.wall,sample,0,1,cut,column,top,1,lip-top);
-  const pilot=smoothAcid && theme.id==='acid';
-  const joint=Math.floor((lateral/ARCH_WIDTH+.5)*(pilot?9:15))%2;
-  const tone=joint ? 15 : pilot ? 22 : 35;
+  const smooth=usesSmoothFinish(theme);
+  const texture=smooth?theme.smoothWalls[0]:theme.wall;
+  const sample=Math.max(0,Math.min(texture.width-1,Math.floor((lateral/ARCH_WIDTH+.5)*texture.width)));
+  const cut=(lip-top)/(CEILING_HEIGHT*scale)*texture.height;
+  if(cut>0) ctx.drawImage(texture,sample,0,1,cut,column,top,1,lip-top);
+  const joint=Math.floor((lateral/ARCH_WIDTH+.5)*(smooth?9:15))%2;
+  const tone=joint ? 15 : smooth ? 22 : 35;
   const metal=arch==='ironArch', timber=arch==='timber';
   ctx.fillStyle=metal ? (joint?'#58616d':'#838791') : timber ? (joint?'#644939':'#976b48') :
     `rgb(${base.map(value=>Math.min(255,value+tone)).join(',')})`;
@@ -1164,6 +1136,10 @@ function paintArch(column,distance,lateral,theme,openLeaf=false){
     ctx.fillStyle=accent==='runes'?'#b388db':accent==='goldLine'?'#e1c783':'#eee6d8';
     ctx.fillRect(column,lip-trim*.38,1,trim*.24);
   }
+  if(warm>0){
+    ctx.fillStyle=`rgba(255,153,70,${warm*.22})`;
+    ctx.fillRect(column,top,1,lip-top);
+  }
   if(openLeaf && lateral<-ARCH_WIDTH/2+.13){
     ctx.fillStyle='#67482f';
     ctx.fillRect(column,lip,1,horizon+EYE_HEIGHT*scale-lip);
@@ -1171,6 +1147,61 @@ function paintArch(column,distance,lateral,theme,openLeaf=false){
   }
   return [top,lip];
 }
+const PUNCH_SECONDS=.39;
+let punchTime=PUNCH_SECONDS, stride=0, walkSway=0;
+function punch(){
+  if(mode==='eye' && !escaped && !defeated && punchTime>=PUNCH_SECONDS) punchTime=0;
+}
+function punchReach(t){
+  if(t>=PUNCH_SECONDS) return 0;
+  if(t<.065) return -.15*Math.sin(t/.065*Math.PI);
+  if(t<.175) return Math.sin((t-.065)/.11*Math.PI/2);
+  if(t<.21) return 1;
+  return Math.cos((t-.21)/(PUNCH_SECONDS-.21)*Math.PI/2)**2;
+}
+function drawPlayerArm(){
+  const reach=punchReach(punchTime);
+  const sway=Math.sin(stride)*walkSway*(1-Math.max(0,reach));
+  const bob=(1-Math.cos(stride*2))*walkSway*.5;
+  ctx.save();
+  ctx.scale(width/480,height/300);
+  const tipX=346-101*reach+sway*5,tipY=231-75*reach+bob*4;
+  const fistScale=1-reach*.36;
+  const sleeve=ctx.createLinearGradient(tipX-20,tipY+20,390,280);
+  sleeve.addColorStop(0,'#787e54');sleeve.addColorStop(.5,'#414631');sleeve.addColorStop(1,'#212820');
+  ctx.fillStyle=sleeve;
+  ctx.beginPath();ctx.moveTo(tipX-17*fistScale,tipY+13*fistScale);
+  ctx.quadraticCurveTo(tipX+3,tipY+35,355,306);
+  ctx.lineTo(470,310);ctx.quadraticCurveTo(401,279,tipX+22*fistScale,tipY+7*fistScale);ctx.closePath();ctx.fill();
+  ctx.translate(tipX,tipY);ctx.scale(fistScale,fistScale);
+  const glove=ctx.createLinearGradient(-13,-20,19,22);
+  glove.addColorStop(0,'#827866');glove.addColorStop(.38,'#565046');glove.addColorStop(1,'#282622');
+  ctx.fillStyle=glove;ctx.strokeStyle='#282520';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(-18,12);ctx.quadraticCurveTo(-26,6,-23,-3);
+  ctx.quadraticCurveTo(-24,-13,-16,-15);ctx.quadraticCurveTo(-12,-21,-6,-17);
+  ctx.quadraticCurveTo(-1,-23,5,-18);ctx.quadraticCurveTo(11,-21,16,-13);
+  ctx.quadraticCurveTo(22,-13,23,-5);ctx.lineTo(24,13);
+  ctx.quadraticCurveTo(19,26,6,26);ctx.lineTo(-10,20);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.strokeStyle='#978977';ctx.lineWidth=1.3;
+  ctx.beginPath();ctx.moveTo(-15,-13);ctx.lineTo(-12,-5);ctx.moveTo(-5,-15);ctx.lineTo(-2,-6);
+  ctx.moveTo(5,-15);ctx.lineTo(8,-6);ctx.moveTo(15,-11);ctx.lineTo(17,-3);
+  ctx.moveTo(-21,5);ctx.quadraticCurveTo(-13,0,-8,7);ctx.stroke();
+  ctx.restore();
+}
+function drawCrosshair(){
+  const scale=width/480,x=width/2,y=height/2;
+  ctx.beginPath();
+  ctx.arc(x,y,5.5*scale,0,Math.PI*2);
+  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+    ctx.moveTo(x+3.2*dx*scale,y+3.2*dy*scale);
+    ctx.lineTo(x+9*dx*scale,y+9*dy*scale);
+  }
+  ctx.strokeStyle='#12130dcc';ctx.lineWidth=2.6*scale;ctx.stroke();
+  ctx.strokeStyle='#eee9d7ed';ctx.lineWidth=1.05*scale;ctx.stroke();
+  ctx.fillStyle='#eee9d7';
+  ctx.fillRect(x-.5*scale,y-.5*scale,scale,scale);
+}
+
 function drawTorchGlow(x,y,radius,d,flicker) {
   const left=Math.max(0,Math.floor(x-radius)), right=Math.min(width,Math.ceil(x+radius));
   if (left>=right) return;
@@ -1234,8 +1265,8 @@ function renderMap(mini=false) {
       continue;
     }
     if (mini || size<12) {
-      if (a.kind!=='torch' && a.kind!=='trap' && a.kind!=='ward') {
-        ctx.fillStyle=({boss:'#e879cb',enemy:'#f9745b',chest:'#edaa52',key:'#f9e58a','iron-key':'#f9e58a',exit:'#84cc91'})[a.kind];
+      if (a.kind!=='torch' && a.kind!=='trap') {
+        ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',key:'#f9e58a','iron-key':'#f9e58a',exit:'#84cc91'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
         ctx.arc(left+a.x*size,top+a.y*size,Math.max(1.2,size*.32),0,Math.PI*2);
@@ -1266,13 +1297,15 @@ function setMode(next) {
 }
 const moveKeys = new Set(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright']);
 addEventListener('keydown',event => {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.target.closest('select, button') && event.key===' ') return;
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.target.closest('select')) return;
   const key = event.key.toLowerCase();
   if (moveKeys.has(key)) { keys.add(key); event.preventDefault(); }
-  if (!event.repeat && key === ' ') { event.preventDefault(); interact(); }
-  if (!event.repeat && key === 'f') fight();
-  if (!event.repeat && key === 'b') fight(true);
+  if (key===' '){
+    event.preventDefault();
+    if(!event.repeat) punch();
+  }
+  if (!event.repeat && key==='f') interact();
   if (!event.repeat && key === 'h') heal();
   if (!event.repeat && key === 'v') setMode(mode === 'eye' ? 'map' : 'eye');
 });
@@ -1305,8 +1338,7 @@ byId('eye').onclick = () => setMode('eye');
 byId('interact').onclick = interact;
 byId('reset').onclick = restart;
 locationSelect.onchange=restart;
-byId('attack').onclick=()=>fight();
-byId('block').onclick=()=>fight(true);
+byId('punch').onclick=punch;
 byId('heal').onclick=heal;
 byId('buy').onclick=buyPick;
 const down = key => keys.has(key) || [...held.values()].includes(key);
@@ -1320,13 +1352,20 @@ function frame(now) {
   const distance=3.0*dt/Math.max(1,Math.hypot(forward,strafe));
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle);
   const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
+  const beforeX=player.x,beforeY=player.y;
   if(!defeated && !escaped){
     if (canStand(player.x+dx,player.y)) player.x+=dx;
     if (canStand(player.x,player.y+dy)) player.y+=dy;
     triggerTraps();
   }
+  const travelled=Math.hypot(player.x-beforeX,player.y-beforeY);
+  stride+=travelled*6.2;
+  walkSway+=(Number(travelled>.00001)-walkSway)*Math.min(1,dt*12);
+  if(walkSway<.001) walkSway=0;
+  const punchFrame=punchTime;
+  punchTime=Math.min(PUNCH_SECONDS,punchTime+dt);
   const torchTick=mode === 'eye' ? Math.floor(now/80) : 0;
-  const viewState=[mode,player.x,player.y,player.angle,turn,torchTick].join('|');
+  const viewState=[mode,player.x,player.y,player.angle,turn,torchTick,mode==='eye'?walkSway:0,mode==='eye'?punchFrame:0].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
@@ -1334,10 +1373,9 @@ function frame(now) {
   lastRender = viewState;
   const roomName=tile(Math.floor(player.x),Math.floor(player.y))==='.' ?
     rooms.get(roomKey({x:Math.floor(player.x/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER,y:Math.floor(player.y/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER})) : 'Archway';
-  const foe=targetActor(['enemy','boss']);
-  byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}${foe && !defeated && !escaped ? ` · ${foe.name} ${foe.hp}/${foe.maxHp} HP` : ''}`;
+  byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}`;
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
-  byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}Loot ${loot}`;
+  byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}${recoveredCache?'Main supplies recovered · ':''}Loot ${loot}`;
   if (mode === 'eye') {
     renderFirstPerson(.92+.09*Math.sin(torchTick*.8)+.04*Math.sin(torchTick*2.4));
     renderMap(true);
