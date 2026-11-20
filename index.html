@@ -253,10 +253,11 @@ function rival(id,p,name,arms){
 
 
 // Both views share the projected room grid and encounter state.
-const ROOM_SPACING=11;
+const ROOM_SIZE=30, ROOM_SPACING=39, HALF_ROOM=ROOM_SIZE/2;
+const ARCH_WIDTH=5, ARCH_HALF=Math.floor(ARCH_WIDTH/2);
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
-let room,rooms,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
+let room,rooms,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
 const canvas = document.querySelector('#view');
 const ctx = canvas.getContext('2d');
 const width = canvas.width, height = canvas.height, horizon = height / 2;
@@ -284,10 +285,14 @@ function restart() {
   const rows=(Math.max(...layout.tiles.map(t=>t.y))-originY+1)*ROOM_SPACING;
   room=Array.from({length:rows},()=>Array(cols).fill('#'));
   rooms=new Map();
+  doors=new Map();
+  mapLayers=new Map();
+  doorVersion=0;
+  ironKey=false;
   actors=[];
   const bossKey=layout.bossKey ?? roomKey(layout.tiles.find(t=>t.type===0));
   const entrance=layout.tiles.find(t=>t.type===17);
-  const center=t=>({x:(t.x-originX)*ROOM_SPACING+4.5,y:(t.y-originY)*ROOM_SPACING+4.5});
+  const center=t=>({x:(t.x-originX)*ROOM_SPACING+19.5,y:(t.y-originY)*ROOM_SPACING+19.5});
   const boss=grid.get(bossKey);
   const production={0:['gold','stone'],2:['food'],3:['stone'],5:['rp'],10:['gold'],18:['gold'],19:['rp']};
   const producers={gold:0,stone:0,food:0,rp:0};
@@ -295,24 +300,28 @@ function restart() {
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const roomName=DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0];
-    // Six by five rooms. Corridors occupy the gap between single-cell wall faces.
-    for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=3;dx++) {
+    for(let dy=-HALF_ROOM;dy<HALF_ROOM;dy++) for(let dx=-HALF_ROOM;dx<HALF_ROOM;dx++) {
       room[cy+dy][cx+dx]='.';
-      rooms.set(roomKey({x:cx+dx,y:cy+dy}),roomName);
     }
+    rooms.set(roomKey({x:cx,y:cy}),roomName);
     for(const [d,[dx,dy]] of DIRS.entries()){
       const neighbor=grid.get(roomKey({x:t.x+dx,y:t.y+dy}));
       if(!neighbor || !compatible(t,neighbor,d)) continue;
-      const boundary=d===1 ? 4 : 3;
-      // Each connected room draws its half and meets the other at the midpoint.
+      const boundary=dx+dy>0 ? HALF_ROOM : HALF_ROOM+1;
       const last=Math.floor(ROOM_SPACING/2);
+      const archX=cx+dx*boundary, archY=cy+dy*boundary;
+      const vault=t===boss && !!layout.keyRoom;
+      const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size%4];
+      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
       for(let step=boundary;step<=last;step++) {
-        for(let lane=0;lane<2;lane++){
+        for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
           const col=cx+dx*step+Math.abs(dy)*lane;
           const rowIndex=cy+dy*step+Math.abs(dx)*lane;
-          room[rowIndex][col]=neighbor===boss && layout.keyRoom && step===boundary ? 'G' : '=';
+          room[rowIndex][col]=step===boundary ? 'A' : '=';
+          if(step===boundary) doors.set(cellKey(col,rowIndex),arch);
         }
       }
+      actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*1.95,y:arch.y-dy*1.5+Math.abs(dx)*1.95,lift:.38,height:.52});
     }
 
     const defender=layout.defenders[key];
@@ -325,7 +334,7 @@ function restart() {
     const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
       Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*(defender?.2:.1))])) : null;
     const chest=layout.chests?.[key];
-    if(chest || loot) actors.push({kind:'chest',x:x+3,y:y+2,height:.38,radius:.31,roomKey:key,chest,loot});
+    if(chest || loot) actors.push({kind:'chest',x:x+14,y:y+14,height:.38,radius:.31,roomKey:key,chest,loot});
     if(layout.keyRoom===key) actors.push({kind:'key',x:x-.92,y:y+.76,height:.25});
     if(t.dungeonTrap || (!site && t.type===16 && t.y===entrance.y-2)){
       actors.push({kind:'trap',name:t.dungeonTrap ?? 'spikes',x,y,height:.06});
@@ -340,11 +349,12 @@ function restart() {
   // Mark a single layer of masonry around walkable space. The rest is map void.
   for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++) {
     if(room[y][x]!=='#') continue;
-    if(DIRS.some(([dx,dy])=>['.','=','G'].includes(room[y+dy][x+dx]))) room[y][x]='W';
+    if(DIRS.some(([dx,dy])=>['.','=','A'].includes(room[y+dy][x+dx]))) room[y][x]='W';
   }
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
-  actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.05,height:.67});
+  actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
+  actors.push({kind:'iron-key',x:spawn.x,y:spawn.y-.25,height:.25});
   torches=actors.filter(a=>a.kind==='torch');
   health=100;
   lootBag={gold:0,stone:0,food:0,rp:0};
@@ -357,7 +367,7 @@ function restart() {
   byId('objective').textContent=site
     ? `${site.name} · Defeat ${site.boss}, then return to the entrance.`
     : `${layout.rulingName} · Raid the keep, defeat Prince ${layout.prince.name}, and return to the gate.`;
-  tell(site?.warning ?? 'Loot the rooms and watch for the trap on the way to the throne.');
+  tell('Pick up the iron key ahead. Use Interact at doors and chests. '+(site?.warning ?? 'Watch for traps on the way to the throne.'));
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -375,18 +385,31 @@ function collect(resources) {
 
 function interact() {
   if(escaped || defeated) return;
-  const a=targetActor(['chest','key','ward','exit']);
+  const door=nearbyDoor();
+  if(door){
+    if(door.status==='locked'){
+      const key=door.vault ? hasKey : ironKey;
+      if(!key && !picks){ tell(door.vault?'Locked vault. Find the vault key or use a lockpick.':'Locked door. Use the iron key or a lockpick.'); return; }
+      if(!key) picks--;
+      tell(key?'Unlocked the door with your key.':'Picked the lock and opened the door.');
+    } else tell('Opened the door.');
+    door.status='open';
+    doorVersion++;
+    turn++;
+    return;
+  }
+  const a=targetActor(['chest','key','iron-key','ward','exit']);
   switch(a?.kind){
     case 'chest': {
       if(actors.some(foe=>foe.kind==='enemy' && foe.roomKey===a.roomKey && !foe.done)){
         tell('Defeat the room’s defender before taking the loot.');
         return;
       }
-      if(a.chest?.locked && !picks){
-        tell('Locked chest. Buy a Lockpick Set at the entrance, then return.');
+      if(a.chest?.locked && !picks && !ironKey && !hasKey){
+        tell('Locked chest. Use a key or buy a Lockpick Set at the entrance.');
         return;
       }
-      if(a.chest?.locked) picks--;
+      if(a.chest?.locked && !ironKey && !hasKey) picks--;
       const contents={...a.loot};
       if(a.chest) contents.gold=(contents.gold ?? 0)+a.chest.gold;
       collect(contents);
@@ -394,9 +417,13 @@ function interact() {
       tell(`Collected ${Object.entries(contents).map(([kind,amount])=>amount+' '+kind).join(', ')}.`);
       break;
     }
+    case 'iron-key':
+      a.done=ironKey=true;
+      tell('Iron key collected. It opens ordinary locked doors and treasure chests.');
+      break;
     case 'key':
       a.done=hasKey=true;
-      tell('Vault key recovered. The iron vault door is now open.');
+      tell('Vault key recovered. Use it at the locked vault door.');
       break;
     case 'ward':
       a.done=true;
@@ -480,12 +507,34 @@ function triggerTraps(){
   tell(`A ${trap.name} trap triggered. Took ${damage} damage.`);
   hurt(damage);
 }
+function cellKey(x,y) { return y*room[0].length+x; }
+function isClosed(door) { return door.status==='closed' || door.status==='locked'; }
+function nearbyDoor(){
+  const seen=new Set();
+  let nearest, best=1.65;
+  const px=Math.floor(player.x),py=Math.floor(player.y);
+  for(let y=py-2;y<=py+2;y++) for(let x=px-2;x<=px+2;x++){
+    if(tile(x,y)!=='A') continue;
+    const door=doors.get(cellKey(x,y));
+    if(!isClosed(door) || seen.has(door)) continue;
+    seen.add(door);
+    const tx=door.axis==='x' ? door.x : Math.max(door.x-ARCH_HALF,Math.min(player.x,door.x+ARCH_HALF));
+    const ty=door.axis==='y' ? door.y : Math.max(door.y-ARCH_HALF,Math.min(player.y,door.y+ARCH_HALF));
+    const dx=tx-player.x,dy=ty-player.y,d=Math.hypot(dx,dy);
+    if(d>best || (mode==='eye' && Math.cos(player.angle)*dx+Math.sin(player.angle)*dy<d*.4)) continue;
+    const hit=cast(dx,dy);
+    if(doors.get(cellKey(hit.x,hit.y))!==door) continue;
+    best=d;
+    nearest=door;
+  }
+  return nearest;
+}
 function tile(x,y) {
   return room[y]?.[x] ?? '#';
 }
 function solid(x,y) {
   const cell = tile(x,y);
-  return cell === '#' || cell === 'W' || cell === 'B' || (cell === 'G' && !hasKey);
+  return cell === '#' || cell === 'W' || cell === 'B' || (cell==='A' && isClosed(doors.get(cellKey(x,y))));
 }
 function canStand(x,y) {
   const r = 0.17;
@@ -498,7 +547,7 @@ function canStand(x,y) {
 }
 
 // Grid traversal returns perpendicular depth when given a camera-plane ray.
-function cast(dx,dy) {
+function cast(dx,dy,arches) {
   let x = Math.floor(player.x), y = Math.floor(player.y);
   const stepX = dx < 0 ? -1 : 1, stepY = dy < 0 ? -1 : 1;
   const deltaX = dx === 0 ? Infinity : Math.abs(1/dx);
@@ -510,6 +559,13 @@ function cast(dx,dy) {
     side = nextX < nextY ? 'x' : 'y';
     if (side === 'x') { distance = nextX; nextX += deltaX; x += stepX; }
     else { distance = nextY; nextY += deltaY; y += stepY; }
+    if(arches && tile(x,y)==='A'){
+      const arch=doors.get(cellKey(x,y));
+      if(!isClosed(arch) && arch.axis===side){
+        const lateral=side==='x' ? player.y+dy*distance-arch.y : player.x+dx*distance-arch.x;
+        arches.push({arch,distance,lateral});
+      }
+    }
   } while (!solid(x,y));
   const crossing = side === 'x' ? player.y+dy*distance : player.x+dx*distance;
   return { x, y, distance, u: crossing-Math.floor(crossing), side };
@@ -626,6 +682,7 @@ sprites.boss=defenderSprite('#584373','#e3bb67');
 sprites.key=surface(24,12,rect=>{
   rect('#d9a749',2,1,8,9); rect('#654724',4,3,4,4); rect('#ffd46c',9,4,13,3); rect('#d9a749',18,6,4,4);
 });
+sprites['iron-key']=sprites.key;
 sprites.ward=surface(16,24,rect=>{
   rect('#9b6e49',3,21,10,3); rect('#e4c68b',6,9,4,13); rect('#ff781e',6,1,4,8); rect('#fff4a2',7,4,2,6);
 });
@@ -670,21 +727,32 @@ function renderPlanes(fx,fy,rx,ry) {
 function renderFirstPerson(flicker) {
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
   renderPlanes(fx,fy,rx,ry);
+  const openings=Array.from({length:width},()=>[]);
   for (let x=0; x<width; x++) {
     const camera = (x+0.5-width/2)/focal;
-    const hit = cast(fx+rx*camera,fy+ry*camera);
+    const hit = cast(fx+rx*camera,fy+ry*camera,openings[x]);
     const d=Math.max(.01,hit.distance), scale=focal/d;
     const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
     depth[x] = d;
-    ctx.drawImage((walls[tile(hit.x,hit.y)] ?? walls['#']),Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    const cell=tile(hit.x,hit.y), door=cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
+    ctx.drawImage(door ? walls[door.status==='locked'?'G':'D'] : (walls[cell] ?? walls['#']),Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    if(door){
+      const lateral=door.axis==='x' ? player.y+(fy+ry*camera)*d-door.y : player.x+(fx+rx*camera)*d-door.x;
+      paintArch(x,d,lateral);
+    }
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     let torchLight=0;
     for (const torch of torches) {
-      torchLight=Math.max(torchLight,.3-Math.hypot(torch.x-hitX,torch.y-hitY)*.095);
+      const dx=torch.x-hitX,dy=torch.y-hitY;
+      if(Math.abs(dx)>3.2||Math.abs(dy)>3.2) continue;
+      torchLight=Math.max(torchLight,.3-Math.hypot(dx,dy)*.095);
     }
     const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
     ctx.fillStyle = `rgba(13,10,11,${Math.max(0,1-light-torchLight*flicker)})`;
     ctx.fillRect(x,top,1,h);
+    for(const opening of openings[x].reverse()){
+      opening.band=paintArch(x,opening.distance,opening.lateral,opening.arch.status==='open');
+    }
   }
 
   const visible = actors.filter(visibleActor).map(a => {
@@ -699,13 +767,41 @@ function renderFirstPerson(flicker) {
     if (a.kind === 'torch') drawTorchGlow(width/2+lateral*scale,top+h*.3,Math.max(4,h*.95),d,flicker);
     ctx.globalAlpha = Math.max(.6,1-d*.032);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
-      if (depth[x]>d) ctx.drawImage(sprite,Math.floor((x-start)/w*sprite.width),0,1,sprite.height,x,top,1,h);
+      if(depth[x]<=d) continue;
+      const sourceX=Math.floor((x-start)/w*sprite.width);
+      let parts=[[top,top+h]];
+      for(const {distance,band} of openings[x]){
+        if(distance>=d) continue;
+        parts=parts.flatMap(([lo,hi])=>hi<=band[0]||lo>=band[1] ? [[lo,hi]] :
+          [[lo,Math.min(hi,band[0])],[Math.max(lo,band[1]),hi]].filter(([a,b])=>b>a));
+      }
+      for(const [lo,hi] of parts){
+        ctx.drawImage(sprite,sourceX,(lo-top)/h*sprite.height,1,(hi-lo)/h*sprite.height,x,lo,1,hi-lo);
+      }
     }
     ctx.globalAlpha = 1;
   }
   ctx.fillStyle='#f4e6c9';
   ctx.fillRect(width/2-2,horizon,5,1);
   ctx.fillRect(width/2,horizon-2,1,5);
+}
+function paintArch(column,distance,lateral,openLeaf=false){
+  const scale=focal/Math.max(.01,distance);
+  const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
+  const crown=.76+.42*Math.sqrt(1-u*u);
+  const top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
+  const lip=horizon-(crown-EYE_HEIGHT)*scale;
+  const trim=Math.min(lip-top,.075*scale);
+  ctx.fillStyle='#4e4036';
+  ctx.fillRect(column,top,1,lip-top);
+  ctx.fillStyle=Math.floor((lateral+ARCH_WIDTH/2)*3)%2 ? '#968574' : '#a99780';
+  ctx.fillRect(column,lip-trim,1,trim);
+  if(openLeaf && lateral<-ARCH_WIDTH/2+.13){
+    ctx.fillStyle='#67482f';
+    ctx.fillRect(column,lip,1,horizon+EYE_HEIGHT*scale-lip);
+    return [top,horizon+EYE_HEIGHT*scale];
+  }
+  return [top,lip];
 }
 function drawTorchGlow(x,y,radius,d,flicker) {
   const left=Math.max(0,Math.floor(x-radius)), right=Math.min(width,Math.ceil(x+radius));
@@ -725,32 +821,28 @@ function drawTorchGlow(x,y,radius,d,flicker) {
 }
 function renderMap(mini=false) {
   const size=Math.min(mini ? 5 : 23,(mini ? 105 : height-12)/Math.max(room.length,room[0].length));
-  const cellSize=size*(mini ? .92 : .96);
   const left=mini ? 9 : (width-room[0].length*size)/2;
   const top=mini ? 9 : (height-room.length*size)/2;
-  ctx.fillStyle='#15120f';
-  if (mini) ctx.fillRect(left-3,top-3,room[0].length*size+5,room.length*size+5);
-  else ctx.fillRect(0,0,width,height);
-  room.forEach((row,y) => row.forEach((cell,x) => {
-    if(cell==='#') return;
-    const px=left+x*size, py=top+y*size;
-    ctx.fillStyle=cell==='=' ? '#a58e70' : (x+y)%2 ? '#6c5747' : '#5b473a';
-    ctx.fillRect(px,py,cellSize,cellSize);
-    if (solid(x,y)) {
-      if (mini) {
-        ctx.fillStyle=cell === 'G' ? '#aeb3bf' : cell === 'D' ? '#ac784b' : '#8b8378';
-        ctx.fillRect(px,py,cellSize,cellSize);
-      } else ctx.drawImage(walls[cell] ?? walls['#'],px,py,cellSize,cellSize);
-    }
-    if ((cell === 'D' || cell === 'G') && !solid(x,y)) {
-      ctx.fillStyle='#d2a574';
-      ctx.fillRect(px,py,cellSize,Math.max(1,size*.23));
-    }
-  }));
+  let layer=mapLayers.get(mini);
+  if(layer?.version!==doorVersion){
+    const image=surface(width,height,(rect)=>{
+      rect('#15120f',mini?left-3:0,mini?top-3:0,mini?room[0].length*size+5:width,mini?room.length*size+5:height);
+      room.forEach((row,y)=>row.forEach((cell,x)=>{
+        if(cell==='#') return;
+        const door=cell==='A' ? doors.get(cellKey(x,y)) : null;
+        const color=door ? ({bare:'#d5bc97',open:'#ba9865',closed:'#a96838',locked:'#d45545'})[door.status] :
+          ({'.':'#6c5747','=':'#a58e70',W:'#8b8378'})[cell];
+        rect(color,left+x*size,top+y*size,Math.ceil(size),Math.ceil(size));
+      }));
+    });
+    layer={version:doorVersion,image};
+    mapLayers.set(mini,layer);
+  }
+  ctx.drawImage(layer.image,0,0);
   for (const a of actors.filter(visibleActor)) {
     if (mini || size<12) {
       if (a.kind!=='torch' && a.kind!=='trap' && a.kind!=='ward') {
-        ctx.fillStyle=({boss:'#e879cb',enemy:'#f9745b',chest:'#edaa52',key:'#f9e58a',exit:'#84cc91'})[a.kind];
+        ctx.fillStyle=({boss:'#e879cb',enemy:'#f9745b',chest:'#edaa52',key:'#f9e58a','iron-key':'#f9e58a',exit:'#84cc91'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
         ctx.arc(left+a.x*size,top+a.y*size,Math.max(1.2,size*.32),0,Math.PI*2);
@@ -832,7 +924,7 @@ function frame(now) {
   player.angle += (Number(down('e') || down('arrowright'))-Number(down('q') || down('arrowleft')))*dt*2.4;
   const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'));
   const strafe=Number(down('d'))-Number(down('a'));
-  const distance=2.6*dt/Math.max(1,Math.hypot(forward,strafe));
+  const distance=6.0*dt/Math.max(1,Math.hypot(forward,strafe));
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle);
   const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
   if(!defeated && !escaped){
@@ -847,11 +939,12 @@ function frame(now) {
     return;
   }
   lastRender = viewState;
-  const roomName=rooms.get(roomKey({x:Math.floor(player.x),y:Math.floor(player.y)})) ?? 'Hallway';
+  const roomName=tile(Math.floor(player.x),Math.floor(player.y))==='.' ?
+    rooms.get(roomKey({x:Math.floor(player.x/ROOM_SPACING)*ROOM_SPACING+19,y:Math.floor(player.y/ROOM_SPACING)*ROOM_SPACING+19})) : 'Hallway';
   const foe=targetActor(['enemy','boss']);
   byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}${foe && !defeated && !escaped ? ` · ${foe.name} ${foe.hp}/${foe.maxHp} HP` : ''}`;
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
-  byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${hasKey?'Vault key · ':''}Loot ${loot}`;
+  byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}Loot ${loot}`;
   if (mode === 'eye') {
     renderFirstPerson(.92+.09*Math.sin(torchTick*.8)+.04*Math.sin(torchTick*2.4));
     renderMap(true);
