@@ -1185,7 +1185,8 @@ function paintArmSprite(ctx,x,y,reach,scale,light,warmth,ghost=false){
   }
   ctx.translate(x,y);
   ctx.rotate(Math.atan2(dy,dx));
-  ctx.scale(along,across);
+  // Reflect the left-hand source art into the right-hand pose before mirroring the view.
+  ctx.scale(along,-across);
   ctx.rotate(-Math.atan2(baseY-tipY,baseX-tipX));
   ctx.drawImage(pose.image,-tipX,-tipY);
   const shadow=Math.max(0,Math.min(.38,(1-light)*.67));
@@ -1278,9 +1279,9 @@ class ViewmodelCombat25D {
     const bob=Math.cos(phase)*(1+this.walkSway*3)*(1-Math.max(0,reach));
     ctx.save();
     ctx.translate(240,0);ctx.scale(hand,1);ctx.translate(-240,0);
-    const x=(primary?354:387)-(primary?110:0)*reach+sway;
-    const y=(primary?249:277)-95*reach+bob;
-    const scale=(primary?1:.85)+reach*.26;
+    const x=(primary?342:375)-(primary?86:0)*reach+sway;
+    const y=(primary?249:277)-77*reach+bob;
+    const scale=(primary?1:.85)+reach*.15;
     const twist=-.19-.38*Math.max(0,reach);
     if(primary){
       for(const mark of this.trail){
