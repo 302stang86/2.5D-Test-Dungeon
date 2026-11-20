@@ -253,8 +253,8 @@ function rival(id,p,name,arms){
 
 
 // Both views share the projected room grid and encounter state.
-const ROOM_SIZE=30, ROOM_SPACING=31, HALF_ROOM=ROOM_SIZE/2;
-const ARCH_WIDTH=5, ARCH_HALF=Math.floor(ARCH_WIDTH/2);
+const ROOM_SIZE=20, ROOM_SPACING=ROOM_SIZE+1, HALF_ROOM=ROOM_SIZE/2;
+const ARCH_WIDTH=2, ARCH_HALF=ARCH_WIDTH/2;
 const ROOM_CENTER=HALF_ROOM+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
@@ -304,14 +304,14 @@ function restart() {
     const roomName=hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
     rooms.set(roomKey({x:cx,y:cy}),roomName);
     const n=hall ? ARCH_HALF : HALF_ROOM;
-    const end=hall ? ARCH_HALF+1 : HALF_ROOM;
+    const end=hall ? ARCH_HALF : HALF_ROOM;
     for(let dy=-n;dy<end;dy++) for(let dx=-n;dx<end;dx++) room[cy+dy][cx+dx]='.';
     for(const [d,[dx,dy]] of DIRS.entries()){
       const neighbor=grid.get(roomKey({x:t.x+dx,y:t.y+dy}));
       if(!neighbor || !compatible(t,neighbor,d)) continue;
       const boundary=dx+dy>0 ? HALF_ROOM : HALF_ROOM+1;
       if(hall){
-        for(let step=ARCH_HALF+1;step<boundary;step++) for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
+        for(let step=ARCH_HALF;step<boundary;step++) for(let lane=-ARCH_HALF;lane<ARCH_HALF;lane++){
           room[cy+dy*step+Math.abs(dx)*lane][cx+dx*step+Math.abs(dy)*lane]='.';
         }
       }
@@ -319,14 +319,14 @@ function restart() {
       if(doors.has(cellKey(archX,archY))) continue;
       const vault=(t===boss || neighbor===boss) && !!layout.keyRoom;
       const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size/ARCH_WIDTH%4];
-      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
-      for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
+      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+Math.abs(dx)*.5,y:archY+Math.abs(dy)*.5};
+      for(let lane=-ARCH_HALF;lane<ARCH_HALF;lane++){
         const col=archX+Math.abs(dy)*lane;
         const rowIndex=archY+Math.abs(dx)*lane;
         room[rowIndex][col]='A';
         doors.set(cellKey(col,rowIndex),arch);
       }
-      actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*1.95,y:arch.y-dy*1.5+Math.abs(dx)*1.95,lift:.38,height:.52});
+      actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*.78,y:arch.y-dy*1.5+Math.abs(dx)*.78,lift:.38,height:.52});
     }
 
     const defender=layout.defenders[key];
@@ -339,13 +339,20 @@ function restart() {
     const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
       Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*(defender?.2:.1))])) : null;
     const chest=layout.chests?.[key];
-    if(chest || loot) actors.push({kind:'chest',x:x+(hall?2.2:14),y:y+(hall?2.2:14),height:.38,radius:.31,roomKey:key,chest,loot});
-    if(layout.keyRoom===key) actors.push({kind:'key',x:x-.92,y:y+.76,height:.25});
+    if(chest || loot){
+      if(hall){
+        room[cy][cx+1]='.';
+        room[cy+1][cx+1]='.';
+      }
+      const inset=hall ? 1 : HALF_ROOM-1;
+      actors.push({kind:'chest',x:x+inset,y:y+inset,height:.38,radius:.31,roomKey:key,chest,loot});
+    }
+    if(layout.keyRoom===key) actors.push({kind:'key',x:x-.92,y:y+(hall?-.76:.76),height:.25});
     if(t.dungeonTrap || (!site && t.type===16 && t.y===entrance.y-2)){
       actors.push({kind:'trap',name:t.dungeonTrap ?? 'spikes',x,y,height:.06});
     }
     if(t.type===17 || key===bossKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1)){
-      actors.push({kind:'torch',x:x-2.22,y:y-1.83,lift:.38,height:.52});
+      actors.push({kind:'torch',x:x-(hall?.86:2.22),y:y-(hall?.86:1.83),lift:.38,height:.52});
     }
     if(key===bossKey && site?.id==='dungeon-medium'){
       for(const dx of [-.95,0,.95]) actors.push({kind:'ward',x:x+dx,y:y-1.15,height:.38});
@@ -523,8 +530,8 @@ function nearbyDoor(){
     const door=doors.get(cellKey(x,y));
     if(!isClosed(door) || seen.has(door)) continue;
     seen.add(door);
-    const tx=door.axis==='x' ? door.x : Math.max(door.x-ARCH_HALF,Math.min(player.x,door.x+ARCH_HALF));
-    const ty=door.axis==='y' ? door.y : Math.max(door.y-ARCH_HALF,Math.min(player.y,door.y+ARCH_HALF));
+    const tx=door.axis==='x' ? door.x : Math.max(door.x-ARCH_HALF+.05,Math.min(player.x,door.x+ARCH_HALF-.05));
+    const ty=door.axis==='y' ? door.y : Math.max(door.y-ARCH_HALF+.05,Math.min(player.y,door.y+ARCH_HALF-.05));
     const dx=tx-player.x,dy=ty-player.y,d=Math.hypot(dx,dy);
     if(d>best || (mode==='eye' && Math.cos(player.angle)*dx+Math.sin(player.angle)*dy<d*.4)) continue;
     const hit=cast(dx,dy);
@@ -929,7 +936,7 @@ function frame(now) {
   player.angle += (Number(down('e') || down('arrowright'))-Number(down('q') || down('arrowleft')))*dt*2.4;
   const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'));
   const strafe=Number(down('d'))-Number(down('a'));
-  const distance=6.0*dt/Math.max(1,Math.hypot(forward,strafe));
+  const distance=3.0*dt/Math.max(1,Math.hypot(forward,strafe));
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle);
   const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
   if(!defeated && !escaped){
