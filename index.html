@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>2.5D Test Dungeon</title>
 <style>
 :root { color-scheme: dark; font: 16px system-ui,sans-serif; background:#171613; color:#f4e6c9; }
@@ -25,10 +25,80 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 .hint { font-size:.9rem; color:#d3c4af; }
 #guard-status { color: #a8d5a9; }
 #guard-status.spotted { color: #ffba87; font-weight: 700; }
+.mobile-only, .mobile-only[hidden] { display:none; }
+@media (hover:none) and (pointer:coarse) {
+  body { overflow:hidden; background:#100e0c; overscroll-behavior:none; }
+  main {
+    --safe-left:max(12px, env(safe-area-inset-left));
+    --safe-right:max(12px, env(safe-area-inset-right));
+    --safe-top:max(8px, env(safe-area-inset-top));
+    --safe-bottom:max(10px, env(safe-area-inset-bottom));
+    --action:clamp(50px, 15dvh, 68px);
+    position:fixed; inset:0; width:auto; padding:0;
+  }
+  main:fullscreen { background:#100e0c; }
+  .mobile-only { display:block; }
+  .stage { position:absolute; inset:0; margin:0; border:0; border-radius:0; }
+  canvas { height:100%; object-fit:contain; }
+  .setup, .hint, .controls [data-hold], #reset { display:none; }
+  .setup {
+    position:absolute; inset:var(--safe-top) var(--safe-right) auto auto;
+    z-index:3; width:min(360px, 86vw); max-height:calc(100dvh - var(--safe-top) - var(--safe-bottom));
+    overflow:auto; padding:12px; background:#171613; border:1px solid #78664c; border-radius:10px;
+  }
+  main.menu-open .setup, main.menu-open #reset { display:block; }
+  .setup h1 { display:none; }
+  .setup header, .setup p { margin-bottom:8px; }
+  #close-menu, #fullscreen, #reset { margin-top:8px; }
+  .readout, #message {
+    position:absolute; pointer-events:none; text-shadow:0 1px 3px #000, 0 1px 3px #000;
+    left:var(--safe-left); right:var(--safe-right); justify-content:center; text-align:center;
+    font-size:clamp(11px, 2.9dvh, 14px); margin:0;
+  }
+  .readout { top:var(--safe-top); padding-inline:clamp(42px, 13vw, 112px); gap:2px 8px; }
+  .readout p { margin:0; }
+  #message { bottom:calc(var(--safe-bottom) + 50px); left:23%; right:29%; min-height:0; }
+  .controls button:not([data-hold]), #menu {
+    position:absolute; background:#201a16db; color:#fff0d2; border-color:#e2c79c;
+    font-size:clamp(11px, 3dvh, 15px); font-weight:650; touch-action:none; user-select:none;
+  }
+  .controls button:active, #crouch[aria-pressed=true] { color:#1b1510; background:#e6b769; }
+  .controls button:disabled { opacity:.5; }
+  #menu { top:var(--safe-top); right:var(--safe-right); }
+  #weapon-toggle, #heal { right:var(--safe-right); }
+  #weapon-toggle { top:calc(var(--safe-top) + 48px); }
+  #heal { top:calc(var(--safe-top) + 96px); }
+  #interact { bottom:var(--safe-bottom); left:50%; transform:translateX(-50%); min-width:clamp(104px,20vw,190px); }
+  #crouch, #punch, #reload { width:var(--action); height:var(--action); padding:0; border-radius:50%; }
+  #crouch { right:calc(var(--safe-right) + 1.65 * var(--action)); bottom:var(--safe-bottom); }
+  #punch { right:calc(var(--safe-right) + .82 * var(--action)); bottom:calc(var(--safe-bottom) + .74 * var(--action)); }
+  #reload { right:var(--safe-right); bottom:calc(var(--safe-bottom) + 1.48 * var(--action)); }
+  #joystick {
+    position:absolute; left:var(--safe-left); bottom:var(--safe-bottom);
+    width:clamp(86px, 29dvh, 142px); aspect-ratio:1; border-radius:50%;
+    border:2px solid #e2c79c; background:#201a16c9; color:#fff0d2;
+    touch-action:none; user-select:none;
+  }
+  #joystick span { position:absolute; pointer-events:none; line-height:1; }
+  #joystick .up { top:4%; left:50%; transform:translateX(-50%); }
+  #joystick .down { bottom:4%; left:50%; transform:translateX(-50%); }
+  #joystick .left { left:5%; top:50%; transform:translateY(-50%); }
+  #joystick .right { right:5%; top:50%; transform:translateY(-50%); }
+  #joystick #stick {
+    width:34%; aspect-ratio:1; top:33%; left:33%; border-radius:50%;
+    border:2px solid #fff0d2; background:#ad8759;
+  }
+  #rotate-screen { display:none; }
+}
+@media (hover:none) and (pointer:coarse) and (orientation:portrait) {
+  main > :not(#rotate-screen) { display:none; }
+  #rotate-screen { position:absolute; inset:0; display:grid; place-content:center; text-align:center; padding:24px; }
+}
 </style>
 </head>
 <body>
 <main>
+<section class="setup" aria-label="Expedition settings">
 <header>
 <h1>2.5D Test Dungeon</h1>
 <div class="toolbar" role="group" aria-label="View">
@@ -40,10 +110,19 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <span id="acid-comparison" hidden><label for="acid-finish">Acid chamber finish</label>
 <select id="acid-finish"><option value="smooth">Smooth test</option><option value="original">Original</option></select></span>
 <p id="objective"></p>
+<button class="mobile-only" id="fullscreen">Fullscreen</button>
+<button class="mobile-only" id="close-menu">Back to game</button>
+</section>
 <div class="stage"><canvas id="view" width="480" height="300" aria-label="Dungeon game view"></canvas></div>
 <div class="readout"><p id="position"></p><p id="inventory"></p><p id="guard-status" role="status"></p></div>
 <p id="message" role="status"></p>
 <div class="controls" aria-label="Game controls">
+<div class="mobile-only" id="joystick" role="img" aria-label="Movement joystick">
+<span class="up" aria-hidden="true">↑</span><span class="down" aria-hidden="true">↓</span>
+<span class="left" aria-hidden="true">←</span><span class="right" aria-hidden="true">→</span>
+<span id="stick"></span>
+</div>
+<button class="mobile-only" id="crouch" aria-pressed="false">Crouch</button>
 <button data-hold="q" aria-label="Turn left">↶</button>
 <button data-hold="w" aria-label="Move forward">↑</button>
 <button data-hold="s" aria-label="Move backward">↓</button>
@@ -54,6 +133,11 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <button id="reset">New layout</button>
 </div>
 <p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space or left-click to use fists or weapon, G to equip or stow, R to reload, H to use a bandage, V to switch views. Drag the first-person view to look around.</p>
+<button class="mobile-only" id="menu" aria-expanded="false">Menu</button>
+<div class="mobile-only" id="rotate-screen">
+<p>Rotate your device to play in landscape.</p>
+<button id="landscape">Try fullscreen</button>
+</div>
 </main>
 <script>
 'use strict';
@@ -216,7 +300,8 @@ const ROOM_LEFT=Math.floor(ROOM_SIZE/2), ROOM_RIGHT=ROOM_SIZE-ROOM_LEFT;
 const ARCH_WIDTH=1, ARCH_HALF=ARCH_WIDTH/2;
 const ARCH_LEFT=Math.floor(ARCH_HALF), ARCH_RIGHT=ARCH_WIDTH-ARCH_LEFT;
 const ROOM_CENTER=ROOM_LEFT+1;
-const EYE_HEIGHT=.5;
+const STANDING_EYE_HEIGHT=.5, CROUCHED_EYE_HEIGHT=.29;
+let eyeHeight=STANDING_EYE_HEIGHT;
 const CEILING_HEIGHT=1.3;
 let room,rooms,roomThemes,pillars,arches,mapLayers,actors,ceilingLights,site,health,bandages,defeated,recoveredCache,turn;
 const canvas = document.querySelector('#view');
@@ -233,6 +318,12 @@ const held = new Map();
 const player = {};
 let mode = 'eye', escaped, drag, roomLights, smoothAcid=true;
 const byId = id => document.getElementById(id);
+const mobile = matchMedia('(hover:none) and (pointer:coarse)');
+const portrait = matchMedia('(orientation:portrait)');
+const main = document.querySelector('main');
+const joystick = byId('joystick'), stick = byId('stick'), crouch = byId('crouch');
+let joystickPointer, crouchPointer, stickX=0, stickY=0;
+const mobilePaused = () => mobile.matches && (portrait.matches || main.classList.contains('menu-open'));
 const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
 for (const tier of DUNGEON_TIERS) locationSelect.add(new Option(tier.name,tier.id));
@@ -319,7 +410,7 @@ function takeWeapon(item){
   clearWeaponAction();
   viewmodel=new ViewmodelCombat25D();
   const name=WEAPONS[item.id].name;
-  tell(previous ? `Equipped ${name}. Dropped ${WEAPONS[previous.id].name}.` : `Equipped ${name}. Press G for fists or R to reload.`);
+  tell(previous ? `Equipped ${name}. Dropped ${WEAPONS[previous.id].name}.` : `Equipped ${name}. ${mobile.matches ? 'Use the weapon button for fists or tap Reload.' : 'Press G for fists or R to reload.'}`);
 }
 function toggleWeapon(){
   if(!carriedWeapon||escaped||defeated) return;
@@ -339,7 +430,7 @@ function reloadWeapon(){
 function fireWeapon(){
   const item=activeWeapon();
   if(shotTime>0||reloadTime>0) return;
-  if(!item.ammo){ tell('Empty. Press R to reload.');return; }
+  if(!item.ammo){ tell(mobile.matches?'Empty. Tap Reload.':'Empty. Press R to reload.');return; }
   item.ammo--;
   shotTime=WEAPONS[item.id].interval;
   const dx=Math.cos(player.angle),dy=Math.sin(player.angle),wall=cast(dx,dy);
@@ -366,6 +457,7 @@ function updateWeapon(dt){
 }
 
 function restart() {
+  clearInput();
   const fieldTest=locationSelect.value==='acid-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
   byId('acid-comparison').hidden=!fieldTest;
@@ -466,7 +558,7 @@ function restart() {
   byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
   if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
-  else tell('Use F to open chests and pick up weapons. Press H to use a bandage.');
+  else tell(mobile.matches?'Use Interact to open crates and pick up weapons. Drag the view to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -494,7 +586,7 @@ function interact() {
         const spec=WEAPONS[a.weapon];
         actors.push({kind:'weapon',x:a.x,y:a.y,height:.29,lift:.40,
           id:a.weapon,ammo:spec.capacity,reserve:spec.reserve});
-        tell(`Collected ${found}. Press F again to equip the ${spec.name}.`);
+        tell(`Collected ${found}. ${mobile.matches?'Tap Interact':'Press F'} again to equip the ${spec.name}.`);
       } else {
         tell(a.mainCache?`Main supplies recovered: ${found}. Return to the entrance.`:`Collected ${found}.`);
       }
@@ -1234,7 +1326,7 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
   const lighting=[0,0];
   for (let y=0; y<height; y++) {
     const isFloor = y >= horizon;
-    const planeOffset=isFloor ? EYE_HEIGHT : CEILING_HEIGHT-EYE_HEIGHT;
+    const planeOffset=isFloor ? eyeHeight : CEILING_HEIGHT-eyeHeight;
     const distance=planeOffset*focal/Math.abs(y+0.5-horizon);
     const step = distance/focal;
     let worldX = player.x+distance*fx+(0.5-width/2)*step*rx;
@@ -1323,7 +1415,7 @@ function renderFirstPerson(flicker) {
     const hit=cast(dx,dy,openings[x]);
     const column=tracePillar(dx,dy,nearbyPillars,hit.distance);
     const d=Math.max(.01,column?.distance ?? hit.distance), scale=focal/d;
-    const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
+    const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-eyeHeight)*scale;
     depth[x] = d;
     const face=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02));
     const smooth=usesSmoothFinish(face);
@@ -1374,7 +1466,7 @@ function renderFirstPerson(flicker) {
     const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
     const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
-    const top = horizon+(EYE_HEIGHT-lift)*scale-h;
+    const top = horizon+(eyeHeight-lift)*scale-h;
     ctx.globalAlpha = Math.max(.6,1-d*.032)*(a.kind==='guard'&&a.hitFlash>0?.67:1);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
       if(depth[x]<=d) continue;
@@ -1413,8 +1505,8 @@ function paintArch(column,distance,lateral,theme,glow=0){
   const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
   const {arch,base,accent}=theme.design;
   const crown=.76+.42*(arch==='pointed' ? 1-u : Math.sqrt(1-u*u));
-  const top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
-  const lip=horizon-(crown-EYE_HEIGHT)*scale;
+  const top=horizon-(CEILING_HEIGHT-eyeHeight)*scale;
+  const lip=horizon-(crown-eyeHeight)*scale;
   const trim=Math.min(lip-top,(arch==='timber'?.09:.075)*scale);
   const smooth=usesSmoothFinish(theme);
   const texture=smooth?theme.smoothWalls[0]:theme.wall;
@@ -1988,7 +2080,7 @@ function setMode(next) {
 }
 const moveKeys = new Set(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright']);
 addEventListener('keydown',event => {
-  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  if (mobilePaused() || event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.target.closest('select')) return;
   const key = event.key.toLowerCase();
   if (moveKeys.has(key)) { keys.add(key); event.preventDefault(); }
@@ -2003,7 +2095,81 @@ addEventListener('keydown',event => {
   if (!event.repeat && key === 'v') setMode(mode === 'eye' ? 'map' : 'eye');
 });
 addEventListener('keyup',event => keys.delete(event.key.toLowerCase()));
-addEventListener('blur',() => { keys.clear(); held.clear(); drag=undefined; });
+function resetJoystick(){
+  joystickPointer=undefined;
+  stickX=stickY=0;
+  stick.style.transform='';
+}
+function stand(){
+  crouchPointer=undefined;
+  eyeHeight=STANDING_EYE_HEIGHT;
+  crouch.setAttribute('aria-pressed','false');
+}
+function clearInput(){
+  keys.clear();
+  held.clear();
+  drag=undefined;
+  resetJoystick();
+  stand();
+}
+addEventListener('blur',clearInput);
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) clearInput(); });
+mobile.addEventListener('change',clearInput);
+portrait.addEventListener('change',clearInput);
+function moveJoystick(event){
+  if(event.pointerId!==joystickPointer) return;
+  const bounds=joystick.getBoundingClientRect(), radius=bounds.width*.32;
+  const x=event.clientX-bounds.left-bounds.width/2;
+  const y=event.clientY-bounds.top-bounds.height/2;
+  const length=Math.hypot(x,y);
+  const strength=Math.max(0,(Math.min(1,length/radius)-.14)/.86);
+  const scale=strength/Math.max(1,length);
+  stickX=x*scale;
+  stickY=y*scale;
+  stick.style.transform=`translate(${stickX*radius}px,${stickY*radius}px)`;
+}
+joystick.addEventListener('pointerdown',event=>{
+  if(!mobile.matches || mobilePaused() || event.pointerType!=='touch' || joystickPointer!==undefined) return;
+  joystick.setPointerCapture(event.pointerId);
+  joystickPointer=event.pointerId;
+  moveJoystick(event);
+});
+joystick.addEventListener('pointermove',moveJoystick);
+crouch.addEventListener('pointerdown',event=>{
+  if(!mobile.matches || mobilePaused() || event.pointerType!=='touch' || crouchPointer!==undefined || defeated || escaped) return;
+  crouch.setPointerCapture(event.pointerId);
+  crouchPointer=event.pointerId;
+  eyeHeight=CROUCHED_EYE_HEIGHT;
+  crouch.setAttribute('aria-pressed','true');
+});
+for(const type of ['pointerup','pointercancel','lostpointercapture']){
+  joystick.addEventListener(type,event=>{ if(event.pointerId===joystickPointer) resetJoystick(); });
+  crouch.addEventListener(type,event=>{ if(event.pointerId===crouchPointer) stand(); });
+}
+function setMenu(open){
+  clearInput();
+  main.classList.toggle('menu-open',open);
+  byId('menu').setAttribute('aria-expanded',String(open));
+  canvas.inert=open;
+  document.querySelector('.controls').inert=open;
+}
+async function enterLandscape(){
+  if(!mobile.matches) return;
+  try {
+    if(!document.fullscreenElement && main.requestFullscreen) await main.requestFullscreen();
+    await screen.orientation?.lock?.('landscape');
+  } catch {
+    // The portrait screen continues to require landscape if locking is unavailable.
+  }
+}
+byId('menu').onclick=()=>setMenu(true);
+byId('close-menu').onclick=()=>setMenu(false);
+byId('fullscreen').onclick=async()=>{ await enterLandscape(); setMenu(false); };
+byId('landscape').onclick=enterLandscape;
+if(!main.requestFullscreen || !document.fullscreenEnabled){
+  byId('fullscreen').hidden=true;
+  byId('landscape').hidden=true;
+}
 for (const button of buttons) {
   button.addEventListener('pointerdown',event => {
     button.setPointerCapture(event.pointerId);
@@ -2014,7 +2180,7 @@ for (const button of buttons) {
   }
 }
 canvas.addEventListener('pointerdown',event => {
-  if(mode!=='eye' || drag || (event.pointerType==='mouse' && event.button!==0)) return;
+  if(mobilePaused() || mode!=='eye' || drag || (event.pointerType==='mouse' && event.button!==0)) return;
   drag={id:event.pointerId,x:event.clientX,y:event.clientY,travel:0,mouse:event.pointerType==='mouse'};
   canvas.setPointerCapture(event.pointerId);
 });
@@ -2035,28 +2201,50 @@ for (const type of ['pointerup','pointercancel','lostpointercapture']) {
 }
 byId('map').onclick = () => setMode('map');
 byId('eye').onclick = () => setMode('eye');
-byId('interact').onclick = interact;
-byId('reset').onclick = restart;
+byId('reset').onclick = () => { restart(); setMenu(false); };
+const resetButton=byId('reset');
+function placeReset(){
+  if(mobile.matches) byId('close-menu').before(resetButton);
+  else document.querySelector('.controls').append(resetButton);
+}
+placeReset();
+mobile.addEventListener('change',()=>{ setMenu(false); placeReset(); });
 locationSelect.onchange=restart;
-byId('punch').onclick=punch;
-byId('weapon-toggle').onclick=toggleWeapon;
-byId('reload').onclick=reloadWeapon;
-byId('heal').onclick=heal;
+for(const [id, action] of Object.entries({
+  interact, punch, 'weapon-toggle':toggleWeapon, reload:reloadWeapon, heal
+})){
+  const button=byId(id);
+  button.addEventListener('pointerdown',event=>{
+    if(mobile.matches && event.pointerType==='touch' && !mobilePaused() && !button.disabled){
+      event.preventDefault();
+      action();
+    }
+  });
+  button.addEventListener('click',event=>{
+    if(!mobilePaused() && (!mobile.matches || event.pointerType!=='touch')) action();
+  });
+}
 const down = key => keys.has(key) || [...held.values()].includes(key);
 let previous, lastRender;
 function frame(now) {
   const dt = Math.min(.033,(now-(previous ?? now))/1000);
   previous = now;
+  if(mobilePaused()){
+    requestAnimationFrame(frame);
+    return;
+  }
   player.angle += (Number(down('e') || down('arrowright'))-Number(down('q') || down('arrowleft')))*dt*2.4;
-  const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'));
-  const strafe=Number(down('d'))-Number(down('a'));
+  const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'))-stickY;
+  const strafe=Number(down('d'))-Number(down('a'))+stickX;
   const distance=3.0*dt/Math.max(1,Math.hypot(forward,strafe));
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle);
   const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
   const beforeX=player.x,beforeY=player.y;
   if(!defeated && !escaped){
-    if (canStand(player.x+dx,player.y)) player.x+=dx;
-    if (canStand(player.x,player.y+dy)) player.y+=dy;
+    if(crouchPointer===undefined){
+      if (canStand(player.x+dx,player.y)) player.x+=dx;
+      if (canStand(player.x,player.y+dy)) player.y+=dy;
+    }
     triggerTraps();
   }
   updateGuards(dt);
@@ -2064,7 +2252,7 @@ function frame(now) {
   viewmodel.update(dt,dt>0?travelled/dt:0,travelled>0?strafe:0);
   updateWeapon(dt);
   const lightTick=mode === 'eye' ? Math.floor(now/80) : 0;
-  const viewState=[mode,player.x,player.y,player.angle,turn,...guards.map(g=>[g.x,g.y,g.angle,g.moving,g.done,g.hitFlash,fallFrame(g)].join(',')),lightTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
+  const viewState=[mode,player.x,player.y,player.angle,eyeHeight,turn,...guards.map(g=>[g.x,g.y,g.angle,g.moving,g.done,g.hitFlash,fallFrame(g)].join(',')),lightTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
