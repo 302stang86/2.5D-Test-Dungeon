@@ -534,8 +534,46 @@ function placeFieldProps(left,top){
     const parapet=prop.type==='parapet';
     actors.push({kind:'furnishing',art:prop.type,x,y,height:prop.cover==='low'?.38:.88,
       halfX:prop.width/2-(parapet?.04:.14),halfY:prop.height/2-(parapet?.04:.14),
-      sceneWidth:Math.max(prop.width,prop.height)*.88,parapet});
+      parts:fieldPropParts(prop,x,y)});
   }
+}
+function fieldPropParts(prop,x,y){
+  const vertical=prop.height>prop.width;
+  const box=(along,across,width,depth,bottom,height,color,material='')=>({
+    x:x+(vertical?across:along),y:y+(vertical?along:across),
+    halfX:(vertical?depth:width)/2,halfY:(vertical?width:depth)/2,
+    bottom,height,color,material
+  });
+  if(prop.type==='parapet'){
+    return [box(0,0,1.92,.92,0,.38,[119,110,92],'stone')];
+  }
+  if(prop.type==='bench'){
+    return [
+      box(-.64,0,.26,.58,0,.27,[110,97,78],'stone'),
+      box(.64,0,.26,.58,0,.27,[110,97,78],'stone'),
+      box(0,0,1.72,.63,.27,.38,[147,130,103],'stone')
+    ];
+  }
+  if(prop.type==='crate-stack'){
+    return [
+      box(-.20,0,.37,.66,0,.41,[139,93,56],'wood'),
+      box(.20,.025,.36,.60,0,.40,[116,77,47],'wood'),
+      box(.02,-.07,.57,.49,.41,.88,[153,105,66],'wood')
+    ];
+  }
+  return [
+    box(0,.12,.70,.45,0,.09,[116,79,51],'wood'),
+    box(-.29,.20,.10,.12,.09,.82,[116,79,51],'wood'),
+    box(.29,.20,.10,.12,.09,.82,[116,79,51],'wood'),
+    box(0,.20,.62,.12,.71,.82,[116,79,51],'wood'),
+    box(-.105,-.04,.15,.24,.09,.39,[111,117,119]),
+    box(.105,-.04,.15,.24,.09,.39,[111,117,119]),
+    box(0,-.04,.35,.27,.36,.68,[156,163,163]),
+    box(-.23,-.045,.13,.20,.38,.64,[122,130,130]),
+    box(.23,-.045,.13,.20,.38,.64,[122,130,130]),
+    box(0,-.04,.22,.22,.68,.88,[169,175,173]),
+    box(0,-.159,.14,.02,.76,.79,[41,43,44])
+  ];
 }
 function restart() {
   clearInput();
@@ -944,9 +982,6 @@ sprites.exit=surface(28,32,rect=>{
   rect('#2b3028',8,8,12,6); rect('#2b3028',8,6,4,10); rect('#87482a',13,24,3,8);
 });
 const PROP_ART={
-  parapet:['#655f51','#8d8571',[[0,11,32,21],[0,10,32,4],[2,17,28,2],[0,24,32,2],[6,12,2,6],[19,19,2,7],[10,25,2,7]]],
-  'armor-rack':['#77573d','#aaaeb1',[[4,4,3,27],[25,4,3,27],[12,2,8,7],[9,9,14,10],[6,11,4,10],[22,11,4,10],[10,19,5,10],[17,19,5,10],[2,29,28,3]]],
-  'crate-stack':['#745035','#af8056',[[2,15,15,16],[17,17,15,14],[8,2,17,16],[10,4,13,2],[2,16,30,2],[6,19,2,10],[22,20,2,9],[9,10,15,2]]],
   bench:['#6f4f37','#a67b56',[[2,12,28,5],[5,17,4,10],[23,17,4,10]]],
   banner:['#672d38','#d6aa63',[[7,3,18,23],[3,2,26,2],[13,21,6,9]]],
   barrels:['#795136','#a67d55',[[2,12,12,18],[15,7,15,23],[4,17,25,2],[4,24,25,2]]],
@@ -1468,17 +1503,18 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
 }
 // Intersect the horizontal ray with the round shaft before the distant wall.
 function traceCover(dx,dy,prop,origin){
-  let near=-Infinity,far=Infinity;
-  for(const [delta,center,half] of [[dx,prop.x-origin.x,prop.halfX],[dy,prop.y-origin.y,prop.halfY]]){
+  let near=-Infinity,far=Infinity,side;
+  for(const [axis,delta,center,half] of [['x',dx,prop.x-origin.x,prop.halfX],['y',dy,prop.y-origin.y,prop.halfY]]){
     if(Math.abs(delta)<1e-8){
       if(Math.abs(center)>half) return null;
       continue;
     }
     const first=(center-half)/delta,last=(center+half)/delta;
-    near=Math.max(near,Math.min(first,last));
+    const entry=Math.min(first,last);
+    if(entry>near){near=entry;side=axis;}
     far=Math.min(far,Math.max(first,last));
   }
-  return far>0&&near<=far ? {near:Math.max(.02,near),far} : null;
+  return far>0&&near<=far ? {near:Math.max(.02,near),far,side} : null;
 }
 function coverLimit(dx,dy,limit,origin,height){
   for(const prop of fieldCover){
@@ -1521,11 +1557,33 @@ function paintPillar(column,top,height,{normalX,normalY}){
   }
 }
 
+function paintFieldProp(column,dx,dy,part,hit,wallDistance){
+  const nearScale=focal/hit.near,farScale=focal/Math.min(hit.far,wallDistance);
+  const frontTop=horizon+(eyeHeight-part.height)*nearScale;
+  const frontBottom=horizon+(eyeHeight-part.bottom)*nearScale;
+  const top=Math.min(frontTop,horizon+(eyeHeight-part.height)*farScale);
+  const bottom=Math.max(frontBottom,horizon+(eyeHeight-part.bottom)*farScale);
+  const coordinate=hit.side==='x'?player.y+dy*hit.near:player.x+dx*hit.near;
+  const shade=(hit.side==='x'?.66:.85)/(1+hit.near*.045);
+  const seam=part.material==='wood'&&Math.floor(coordinate*48)%8===0;
+  const color=part.color.map(channel=>Math.round(channel*shade*(seam?.72:1)));
+  ctx.fillStyle='rgb('+color.join(',')+')';
+  ctx.fillRect(column,frontTop,1,frontBottom-frontTop);
+  ctx.fillStyle='rgb('+part.color.join(',')+')';
+  ctx.fillRect(column,top,1,frontTop-top);
+  ctx.fillStyle='#302821';
+  ctx.fillRect(column,frontBottom,1,bottom-frontBottom);
+  if(part.material==='stone'){
+    const seam=frontTop+(frontBottom-frontTop)*.54;
+    ctx.fillRect(column,seam,1,Math.max(1,nearScale*.015));
+  }
+  return [top,bottom];
+}
 function renderFirstPerson(flicker) {
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
   renderPlanes(fx,fy,rx,ry,flicker);
   const nearbyPillars=pillars.filter(p=>Math.abs(p.x-player.x)<24 && Math.abs(p.y-player.y)<24);
-  const parapets=fieldCover.filter(prop=>prop.parapet);
+  const propParts=fieldCover.flatMap(prop=>prop.parts);
   const openings=Array.from({length:width},()=>[]);
   for (let x=0; x<width; x++) {
     const camera = (x+0.5-width/2)/focal;
@@ -1573,31 +1631,21 @@ function renderFirstPerson(flicker) {
       const glow=ceilingLightAt(player.x+dx*entry,player.y+dy*entry)*flicker;
       opening.band=paintArch(x,opening.distance,opening.lateral,theme,glow);
     }
-    const walls=parapets.map(prop=>({prop,hit:traceCover(dx,dy,prop,player)}))
+    const solidProps=propParts.map(part=>({part,hit:traceCover(dx,dy,part,player)}))
       .filter(({hit})=>hit&&hit.near<d).sort((a,b)=>b.hit.near-a.hit.near);
-    for(const {prop,hit} of walls){
-      const scale=focal/hit.near, bottom=horizon+eyeHeight*scale;
-      const front=horizon+(eyeHeight-prop.height)*scale;
-      const top=Math.min(front,horizon+(eyeHeight-prop.height)*focal/Math.min(hit.far,d));
-      ctx.fillStyle='#70695a';
-      ctx.fillRect(x,top,1,front-top);
-      ctx.fillStyle='#56524a';
-      ctx.fillRect(x,front,1,bottom-front);
-      ctx.fillStyle='#8b8270';
-      ctx.fillRect(x,front,1,Math.max(1,scale*.025));
-      ctx.fillStyle='#37342e';
-      ctx.fillRect(x,front+(bottom-front)*.5,1,Math.max(1,scale*.018));
-      openings[x].push({distance:hit.near,band:[top,bottom]});
+    for(const {part,hit} of solidProps){
+      const surface=paintFieldProp(x,dx,dy,part,hit,d);
+      openings[x].push({distance:hit.near,band:surface});
     }
   }
 
-  const visible = actors.filter(a=>a.kind!=='pillar' && !a.parapet && visibleActor(a)).map(a => {
+  const visible = actors.filter(a=>a.kind!=='pillar' && !a.parts && visibleActor(a)).map(a => {
     const dx=a.x-player.x, dy=a.y-player.y;
     return { a, d:dx*fx+dy*fy, lateral:dx*rx+dy*ry };
   }).filter(s => s.d > .08).sort((a,b) => b.d-a.d);
   for (const {a,d,lateral} of visible) {
     const sprite = spriteFor(a);
-    const scale = focal/d, h = a.height*scale, w = a.sceneWidth ? Math.min(a.sceneWidth,2)*scale : h*sprite.width/sprite.height;
+    const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
     const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
     const top = horizon+(eyeHeight-lift)*scale-h;
@@ -2175,7 +2223,7 @@ function renderMap(mini=false) {
     }
     if(a.kind==='furnishing'){
       if(a.halfX!==undefined){
-        ctx.fillStyle=a.parapet?'#847b69':a.height<.5?'#a6845e':'#a59376';
+        ctx.fillStyle=a.art==='parapet'?'#847b69':a.height<.5?'#a6845e':'#a59376';
         ctx.fillRect(left+(a.x-a.halfX)*size,top+(a.y-a.halfY)*size,a.halfX*2*size,a.halfY*2*size);
       }else{
         const prop=spriteFor(a), side=Math.max(2,size*.9);
