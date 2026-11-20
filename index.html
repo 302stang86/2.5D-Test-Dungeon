@@ -1106,7 +1106,7 @@ function renderFirstPerson(flicker) {
   const field=roomLights[Math.floor(player.y/ROOM_SPACING)]?.[Math.floor(player.x/ROOM_SPACING)];
   const sector=[1,0];
   if(field) sampleRoomLight(field,player.x,player.y,sector);
-  viewmodel.render(ctx,width,height,Math.min(1.24,sector[0]*.72+sector[1]*flicker*.49));
+  viewmodel.render(ctx,width,height,Math.min(1.24,sector[0]*.72+sector[1]*flicker*.49),sector[1]*flicker);
   drawCrosshair();
 }
 const archLighting=[0,0];
@@ -1151,6 +1151,9 @@ function paintArch(column,distance,lateral,theme,openLeaf=false,warm=0){
   return [top,lip];
 }
 const PUNCH_TIMINGS={WINDUP:.06,STRIKE:.09,RECOIL:.07,RECOVER:.16};
+const sleeveGrain=ctx.createPattern(surface(64,64,rect=>{
+  for(let i=0;i<1700;i++) rect(i%3?'#0001':'#fff1',(i*17+Math.floor(i/64)*41)%64,(i*31+Math.floor(i/29)*7)%64,1,1);
+}),'repeat');
 const NEXT_PUNCH={WINDUP:'STRIKE',STRIKE:'RECOIL',RECOIL:'RECOVER',RECOVER:'IDLE'};
 class ViewmodelCombat25D {
   constructor(){
@@ -1159,6 +1162,7 @@ class ViewmodelCombat25D {
     this.timer=this.comboWindow=this.bobPhase=this.walkSway=this.strafeTilt=0;
     this.queued=this.hitConnected=false;
     this.impact=null;
+    this.trail=[];
   }
   start(hand){
     this.activeHand=hand;
@@ -1166,6 +1170,7 @@ class ViewmodelCombat25D {
     this.timer=0;
     this.comboWindow=0;
     this.queued=this.hitConnected=false;
+    this.trail.length=0;
   }
   punch(){
     if(this.state==='IDLE') this.start(this.comboWindow>0 ? -this.activeHand : 1);
@@ -1177,6 +1182,8 @@ class ViewmodelCombat25D {
     this.walkSway+=(Math.min(1,speed/3)-this.walkSway)*Math.min(1,dt*12);
     this.strafeTilt+=(strafe*.045-this.strafeTilt)*Math.min(1,dt*10);
     this.comboWindow=Math.max(0,this.comboWindow-dt);
+    for(const mark of this.trail) mark.age+=dt;
+    while(this.trail.length && this.trail[0].age>.065) this.trail.shift();
     if(this.impact){
       this.impact.age+=dt;
       if(this.impact.age>=.18) this.impact=null;
@@ -1206,24 +1213,221 @@ class ViewmodelCombat25D {
     if(this.state==='RECOIL') return 1-recoil*Math.sin(p*Math.PI/2);
     return (1-recoil)*(1-p*p*(3-2*p));
   }
-  render(ctx,w,h,light){
+  render(ctx,w,h,light,warmth){
     ctx.save();
     ctx.scale(w/480,h/300);
     ctx.translate(240,300);ctx.rotate(this.strafeTilt);ctx.translate(-240,-300);
-    this.renderArm(ctx,-this.activeHand,false,light);
-    this.renderArm(ctx,this.activeHand,true,light);
+    this.renderArm(ctx,-this.activeHand,false,light,warmth);
+    this.renderArm(ctx,this.activeHand,true,light,warmth);
     ctx.restore();
   }
-  renderArm(ctx,hand,primary,light){
+  renderArm(ctx,hand,primary,light,warmth){
     const reach=primary?this.reach():0;
     const phase=this.bobPhase+hand*Math.PI/2;
     const sway=Math.sin(phase*.5)*(1+this.walkSway*5)*(1-Math.max(0,reach));
     const bob=Math.cos(phase)*(1+this.walkSway*3)*(1-Math.max(0,reach));
     ctx.save();
     ctx.translate(240,0);ctx.scale(hand,1);ctx.translate(-240,0);
-    paintArm(ctx,(primary?346:381)-(primary?102:0)*reach+sway,(primary?231:263)-77*reach+bob,
-      (primary?1:.85)+reach*.26,(-.19-.38*Math.max(0,reach)),light);
+    const x=(primary?346:381)-(primary?102:0)*reach+sway;
+    const y=(primary?231:263)-77*reach+bob;
+    const scale=(primary?1:.85)+reach*.26;
+    const twist=-.19-.38*Math.max(0,reach);
+    if(primary){
+      for(const mark of this.trail){
+        ctx.save();
+        ctx.globalAlpha=.18*(1-mark.age/.065);
+        this.poseFist(ctx,mark.x,mark.y,mark.scale,mark.twist,light,warmth,true);
+        ctx.restore();
+      }
+      if(this.state==='STRIKE'){
+        this.trail.push({x,y,scale,twist,age:0});
+        if(this.trail.length>3) this.trail.shift();
+      }
+    }
+    this.drawRealisticArm(ctx,459,336,x,y,scale,light,warmth);
+    this.poseFist(ctx,x,y,scale,twist,light,warmth,false);
     ctx.restore();
+  }
+  poseFist(ctx,x,y,scale,twist,light,warmth,ghost){
+    ctx.translate(x,y);ctx.rotate(twist);ctx.scale(scale*.54,scale*.54);
+    this.drawRealisticFist(ctx,light,warmth,ghost);
+  }
+  drawRealisticArm(ctx, sx, sy, fx, fy, scale, light, warmth) {
+    const dx = fx - sx;
+    const dy = fy - sy;
+    const angle = Math.atan2(dy, dx);
+    const len = Math.hypot(dx, dy);
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(angle);
+
+    const sleeveEnd = len * 0.62;
+    const wristEnd = len * 0.94;
+
+    const shoulderHalfW = 43;
+    const elbowHalfW = 29 * Math.sqrt(scale);
+    const forearmBulgeW = 21 * scale;
+    const wristHalfW = 14 * scale;
+
+    const sleeveGrad = ctx.createLinearGradient(0, -shoulderHalfW, 0, shoulderHalfW);
+    sleeveGrad.addColorStop(0, this.litColor(66, 88, 62, light, warmth));
+    sleeveGrad.addColorStop(0.45, this.litColor(42, 58, 40, light, warmth));
+    sleeveGrad.addColorStop(1, this.litColor(20, 29, 20, light, warmth));
+
+    ctx.fillStyle = sleeveGrad;
+    ctx.beginPath();
+    ctx.moveTo(0, -shoulderHalfW);
+    ctx.bezierCurveTo(sleeveEnd * 0.45, -shoulderHalfW * 0.92, sleeveEnd * 0.75, -elbowHalfW * 1.05, sleeveEnd, -elbowHalfW);
+    ctx.lineTo(sleeveEnd, elbowHalfW);
+    ctx.bezierCurveTo(sleeveEnd * 0.75, elbowHalfW * 1.05, sleeveEnd * 0.45, shoulderHalfW * 0.92, 0, shoulderHalfW);
+    ctx.closePath();
+    ctx.fill();
+
+    if (sleeveGrain) {
+      ctx.fillStyle = sleeveGrain;
+      ctx.fill();
+    }
+    ctx.strokeStyle = this.litColor(16, 22, 16, light, 0);
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    ctx.strokeStyle = this.litColor(18, 26, 18, light, 0);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sleeveEnd * 0.78, -elbowHalfW * 0.75);
+    ctx.quadraticCurveTo(sleeveEnd * 0.88, 0, sleeveEnd * 0.78, elbowHalfW * 0.75);
+    ctx.stroke();
+
+    const skinGrad = ctx.createLinearGradient(0, -forearmBulgeW, 0, forearmBulgeW);
+    skinGrad.addColorStop(0, this.litColor(196, 152, 122, light, warmth));     // Top/lit edge
+    skinGrad.addColorStop(0.55, this.litColor(152, 114, 88, light, warmth * 0.6));
+    skinGrad.addColorStop(1, this.litColor(96, 69, 52, light, 0));               // Shaded underside
+
+    ctx.fillStyle = skinGrad;
+    ctx.beginPath();
+    ctx.moveTo(sleeveEnd - 2, -elbowHalfW * 0.92);
+    ctx.bezierCurveTo(
+      sleeveEnd + (wristEnd - sleeveEnd) * 0.35, -forearmBulgeW * 1.08,
+      sleeveEnd + (wristEnd - sleeveEnd) * 0.75, -wristHalfW * 1.15,
+      wristEnd, -wristHalfW
+    );
+    ctx.lineTo(wristEnd, wristHalfW);
+    ctx.bezierCurveTo(
+      sleeveEnd + (wristEnd - sleeveEnd) * 0.75, wristHalfW * 1.15,
+      sleeveEnd + (wristEnd - sleeveEnd) * 0.35, forearmBulgeW * 1.08,
+      sleeveEnd - 2, elbowHalfW * 0.92
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    if (sleeveGrain) {
+      ctx.fillStyle = sleeveGrain;
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = this.litColor(115, 84, 65, light, 0);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sleeveEnd + 8, -forearmBulgeW * 0.2);
+    ctx.quadraticCurveTo(sleeveEnd + (wristEnd - sleeveEnd) * 0.55, -wristHalfW * 0.35, wristEnd - 4, -wristHalfW * 0.25);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawRealisticFist(ctx, light, warmth, isGhost) {
+    const grad = ctx.createRadialGradient(-8, -14, 4, 0, 2, 54);
+    grad.addColorStop(0, this.litColor(208, 162, 130, light, warmth));
+    grad.addColorStop(0.55, this.litColor(154, 115, 89, light, warmth * 0.65));
+    grad.addColorStop(1, this.litColor(88, 63, 47, light, 0));
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(-34, 28);
+    ctx.bezierCurveTo(-40, 10, -40, -22, -30, -32);
+    ctx.bezierCurveTo(-15, -40, 18, -40, 32, -30);
+    ctx.bezierCurveTo(40, -18, 39, 14, 31, 28);
+    ctx.bezierCurveTo(16, 35, -18, 35, -34, 28);
+    ctx.closePath();
+    ctx.fill();
+
+    if (!isGhost && sleeveGrain) {
+      ctx.fillStyle = sleeveGrain;
+      ctx.fill();
+    }
+
+    if (isGhost) return;
+
+    const fingerSpecs = [
+      { x: -31, y: -33, w: 15, h: 25 }, // Index
+      { x: -15, y: -35, w: 16, h: 28 }, // Middle
+      { x: 2,   y: -34, w: 15, h: 27 }, // Ring
+      { x: 18,  y: -31, w: 13, h: 23 }  // Pinky
+    ];
+
+    for (const f of fingerSpecs) {
+      const fGrad = ctx.createLinearGradient(f.x, f.y, f.x, f.y + f.h);
+      fGrad.addColorStop(0, this.litColor(214, 168, 136, light, warmth));
+      fGrad.addColorStop(0.45, this.litColor(156, 117, 90, light, warmth * 0.6));
+      fGrad.addColorStop(1, this.litColor(92, 66, 49, light, 0));
+
+      ctx.fillStyle = fGrad;
+      ctx.beginPath();
+      ctx.roundRect(f.x, f.y, f.w, f.h, [7, 7, 5, 5]);
+      ctx.fill();
+
+      ctx.strokeStyle = this.litColor(74, 52, 38, light, 0);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(f.x + f.w, f.y + 3);
+      ctx.lineTo(f.x + f.w, f.y + f.h - 2);
+      ctx.stroke();
+
+      ctx.fillStyle = `rgba(255, 232, 210, ${0.14 * Math.min(1.2, light)})`;
+      ctx.beginPath();
+      ctx.ellipse(f.x + f.w * 0.5, f.y + 6, f.w * 0.32, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = this.litColor(82, 58, 43, light, 0);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(f.x + 2, f.y + f.h * 0.55);
+      ctx.lineTo(f.x + f.w - 2, f.y + f.h * 0.55);
+      ctx.stroke();
+    }
+
+    const thumbGrad = ctx.createLinearGradient(-34, -8, 18, 12);
+    thumbGrad.addColorStop(0, this.litColor(198, 153, 122, light, warmth));
+    thumbGrad.addColorStop(0.7, this.litColor(146, 108, 83, light, warmth * 0.5));
+    thumbGrad.addColorStop(1, this.litColor(94, 68, 51, light, 0));
+
+    ctx.fillStyle = thumbGrad;
+    ctx.beginPath();
+    ctx.moveTo(-36, 12);
+    ctx.bezierCurveTo(-36, -6, -12, -12, 16, -6);
+    ctx.bezierCurveTo(22, -4, 22, 6, 15, 9);
+    ctx.bezierCurveTo(-6, 14, -22, 18, -36, 12);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = this.litColor(76, 54, 40, light, 0);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-32, -3);
+    ctx.bezierCurveTo(-12, -10, 8, -9, 18, -5);
+    ctx.stroke();
+  }
+
+  litColor(r, g, b, light, warmth) {
+    const l = Math.max(0.18, Math.min(1.35, light));
+    const w = Math.max(0, Math.min(1, warmth));
+
+    const rr = Math.min(255, Math.round(r * l + w * 28));
+    const gg = Math.min(255, Math.round(g * l + w * 12));
+    const bb = Math.min(255, Math.round(b * l - w * 8));
+
+    return `rgb(${rr}, ${Math.max(0, gg)}, ${Math.max(0, bb)})`;
   }
 }
 let viewmodel=new ViewmodelCombat25D();
@@ -1257,33 +1461,6 @@ function drawPunchImpact(fx,fy,rx,ry){
   ctx.restore();
 }
 
-function litColor(hex,light){
-  const color=parseInt(hex.slice(1),16);
-  return `rgb(${[16,8,0].map(shift=>Math.round(Math.min(255,((color>>shift)&255)*light))).join(',')})`;
-}
-function paintArm(ctx,tipX,tipY,fistScale,twist,light){
-  ctx.save();
-  const sleeve=ctx.createLinearGradient(tipX-20,tipY+20,390,280);
-  sleeve.addColorStop(0,litColor('#787e54',light));sleeve.addColorStop(.5,litColor('#414631',light));sleeve.addColorStop(1,litColor('#212820',light));
-  ctx.fillStyle=sleeve;
-  ctx.beginPath();ctx.moveTo(tipX-17*fistScale,tipY+13*fistScale);
-  ctx.quadraticCurveTo(tipX+3,tipY+35,355,306);
-  ctx.lineTo(470,310);ctx.quadraticCurveTo(401,279,tipX+22*fistScale,tipY+7*fistScale);ctx.closePath();ctx.fill();
-  ctx.translate(tipX,tipY);ctx.rotate(twist);ctx.scale(fistScale,fistScale);
-  const glove=ctx.createLinearGradient(-13,-20,19,22);
-  glove.addColorStop(0,litColor('#827866',light));glove.addColorStop(.38,litColor('#565046',light));glove.addColorStop(1,litColor('#282622',light));
-  ctx.fillStyle=glove;ctx.strokeStyle='#282520';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(-18,12);ctx.quadraticCurveTo(-26,6,-23,-3);
-  ctx.quadraticCurveTo(-24,-13,-16,-15);ctx.quadraticCurveTo(-12,-21,-6,-17);
-  ctx.quadraticCurveTo(-1,-23,5,-18);ctx.quadraticCurveTo(11,-21,16,-13);
-  ctx.quadraticCurveTo(22,-13,23,-5);ctx.lineTo(24,13);
-  ctx.quadraticCurveTo(19,26,6,26);ctx.lineTo(-10,20);ctx.closePath();ctx.fill();ctx.stroke();
-  ctx.strokeStyle=litColor('#978977',light);ctx.lineWidth=1.3;
-  ctx.beginPath();ctx.moveTo(-15,-13);ctx.lineTo(-12,-5);ctx.moveTo(-5,-15);ctx.lineTo(-2,-6);
-  ctx.moveTo(5,-15);ctx.lineTo(8,-6);ctx.moveTo(15,-11);ctx.lineTo(17,-3);
-  ctx.moveTo(-21,5);ctx.quadraticCurveTo(-13,0,-8,7);ctx.stroke();
-  ctx.restore();
-}
 function drawCrosshair(){
   const scale=width/480,x=width/2,y=height/2;
   ctx.beginPath();
