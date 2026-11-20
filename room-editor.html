@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon Room Editor</title>
+<style>
+:root { color-scheme:dark; font:16px system-ui,sans-serif; color:#f6e8d1; background:#171411; }
+* { box-sizing:border-box; }
+body { margin:0; background:radial-gradient(ellipse at top,#38291d,transparent 52%); min-height:100vh; }
+main { width:min(1040px,100%); padding:clamp(14px,3vw,32px); margin:auto; }
+header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+h1 { font:bold clamp(28px,5vw,42px) Georgia,serif; margin:0; }
+a { color:#ebbc7d; }
+button { font:inherit; min-height:44px; padding:8px 12px; color:inherit; background:#30261e; border:1px solid #896f53; border-radius:6px; cursor:pointer; touch-action:manipulation; }
+button:disabled { opacity:.45; cursor:default; }
+button[aria-pressed=true] { background:#ebbb7c; color:#251a10; border-color:#ebbb7c; }
+button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-offset:2px; }
+.workspace { display:grid; grid-template-columns:205px minmax(0,1fr); align-items:start; gap:14px; }
+.tools,.map { background:#211b17; border:1px solid #67523f; border-radius:10px; padding:14px; }
+.palette,.toolbar { display:flex; gap:6px; flex-wrap:wrap; }
+.palette { display:grid; }
+.palette button { text-align:left; }
+.tools h2 { font-size:1rem; margin:0 0 8px; }
+.toolbar { margin-bottom:12px; }
+#status { min-height:2.75em; margin:10px 0 0; color:#e0c8a9; }
+.board { overflow:auto; padding:4px; }
+#grid { display:grid; grid-template-columns:repeat(13,minmax(36px,1fr)); width:max(100%, 492px); gap:2px; }
+.cell { position:relative; aspect-ratio:1; min-height:0; padding:0; border-radius:3px; border-color:#4d4035; background:#191613; color:#fff6e6; font-size:clamp(10px,2vw,14px); font-weight:bold; }
+.cell:hover { border-color:#f6d5a1; }
+.cell:focus-visible { z-index:1; outline-offset:0; }
+
+.workspace { grid-template-columns:260px minmax(0,1fr); }
+.palette { max-height:54vh; overflow:auto; padding:3px; }
+.palette button { min-height:40px; }
+.cell[data-cover=full] { background:#674d37; }
+.cell[data-cover=low] { background:#414f63; }
+.cell[data-cover=soft] { background:#66476c; }
+.cell[data-anchor=true] { border-color:#e6bc82; }
+.cell[data-entrance=true] { background:#375442; }
+input { font:inherit; color:inherit; background:#191613; border:1px solid #896f53; border-radius:6px; padding:9px; min-width:0; }
+.toolbar input[type=text] { flex:1 1 160px; }
+#prop-info { color:#e0c8a9; margin:8px 0; min-height:2.5em; font-size:.9rem; }
+@media(max-width:720px) {
+ .workspace { grid-template-columns:1fr; }
+ .palette { display:flex; max-height:150px; }
+ .tools,.map { padding:10px; }
+}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Dungeon Room Editor</h1><a href="./map-editor.html">Map Editor</a></header>
+<div class="workspace">
+<section class="tools" aria-labelledby="tools-title">
+<h2 id="tools-title">Props</h2>
+<div class="palette" id="palette" role="group" aria-label="Room props"></div>
+<p id="prop-info"></p>
+<div class="toolbar">
+<button id="rotate">Rotate 90°</button>
+<button id="entrance" aria-pressed="false">Doorway</button>
+<button id="erase" aria-pressed="false">Erase</button>
+</div>
+<p id="status" role="status">Choose a prop and select a floor tile.</p>
+</section>
+<section class="map" aria-label="Room layout">
+<div class="toolbar">
+<input id="name" type="text" maxlength="80" aria-label="Room name" value="Untitled Room">
+<button id="undo" disabled>Undo</button>
+<button id="save">Save JSON</button>
+<button id="open">Open JSON</button>
+<button id="clear" disabled>Clear room</button>
+<input id="file" type="file" accept=".json,application/json" hidden>
+</div>
+<div class="board" tabindex="0" aria-label="Scrollable 13 by 13 room">
+<div id="grid" role="group" aria-label="Room tiles"></div>
+</div>
+</section>
+</div>
+</main>
+<script>
+'use strict';
+const size=13;
+const props={
+  pillar:['Stone Pillar','PL',1,'full'],
+  'broken-column':['Broken Column','BC',1,'low'],
+  armoire:['Iron-Bound Armoire','AR',1,'full'],
+  'crate-stack':['Stacked Crates','SC',1,'full'],
+  'barrel-cluster':['Barrel Cluster','BS',2,'full'],
+  sarcophagus:['Upright Sarcophagus','SA',1,'full'],
+  tapestry:['Hanging Tapestry','TA',2,'soft'],
+  banner:['Tattered Banner','BN',1,'soft'],
+  'weapon-rack':['Weapon Rack','WR',2,'full'],
+  'armor-rack':['Armor Rack','AK',1,'full'],
+  'iron-maiden':['Iron Maiden','IM',1,'full'],
+  'wooden-cage':['Wooden Cage','CG',1,'full'],
+  rubble:['Collapsed Rubble','RU',2,'low'],
+  stalagmite:['Stalagmite','ST',1,'full'],
+  barrel:['Wooden Barrel','BR',1,'low'],
+  'small-crate':['Small Crate','CR',1,'low'],
+  'overturned-table':['Overturned Oak Table','TB',2,'low'],
+  altar:['Stone Altar','AL',2,'low'],
+  pedestal:['Stone Pedestal','PD',1,'low'],
+  chest:['Open Treasure Chest','CH',1,'low',true],
+  trunk:['Supply Trunk','TR',1,'low',true],
+  parapet:['Low Stone Wall','LW',2,'low'],
+  bench:['Stone Bench / Pew','BP',2,'low'],
+  cauldron:['Cauldron','CA',1,'low'],
+  'unlit-brazier':['Unlit Brazier','UB',1,'low'],
+  'lit-brazier':['Lit Brazier','LB',1,'low',false,true],
+  minecart:['Minecart','MC',2,'low'],
+  handcart:['Wooden Handcart','HC',2,'low']
+};
+const cover={ full:'Solid · standing-height cover',low:'Solid · low cover',soft:'Walk-through · blocks sight' };
+const byId=id=>document.getElementById(id);
+const grid=byId('grid'), status=byId('status'), name=byId('name');
+const file=byId('file'), undo=byId('undo'), clear=byId('clear');
+const draftKey='dungeon-room-editor-v1';
+let items=[], doors=[], tool='pillar', rotation=0, focusedTile=0;
+const history=[];
+const key=(x,y)=>y*size+x;
+const onGrid=(x,y)=>x>=0&&y>=0&&x<size&&y<size;
+const onEdge=(x,y)=>x===0||y===0||x===size-1||y===size-1;
+const validPoint=point=>point && Number.isInteger(point.x)&&Number.isInteger(point.y)&&onGrid(point.x,point.y);
+const say=message=>{status.textContent=message;};
+function footprint({type,x,y,rotation}){
+  return Array.from({length:props[type][2]},(_,offset)=>({x:x+(rotation===0?offset:0),y:y+(rotation===90?offset:0)}));
+}
+function encode(){
+  return {format:'dungeon-room',version:1,width:size,height:size,name:name.value.trim()||'Untitled Room',doorways:doors,props:items.map(item=>{
+    const [, ,length,kind,loot=false,lit=false]=props[item.type];
+    return {...item,width:item.rotation===0?length:1,height:item.rotation===90?length:1,cover:kind,blocksMovement:kind!=='soft',lootContainer:loot,emitsLight:lit};
+  })};
+}
+function decode(data){
+  if(data?.format!=='dungeon-room'||data.version!==1||data.width!==size||data.height!==size||
+    typeof data.name!=='string'||data.name.length>80||!Array.isArray(data.props)||!Array.isArray(data.doorways)||
+    data.props.length>size*size||data.doorways.length>size*4){
+    throw new Error('Choose a 13 × 13 room saved by this editor.');
+  }
+  const occupied=new Set();
+  const doors=data.doorways.map(point=>{
+    if(!validPoint(point)||!onEdge(point.x,point.y)||occupied.has(key(point.x,point.y))) throw new Error('Invalid or duplicate doorway.');
+    occupied.add(key(point.x,point.y));
+    return {x:point.x,y:point.y};
+  });
+  const items=data.props.map(item=>{
+    if(!validPoint(item)||!Object.hasOwn(props,item.type)||![0,90].includes(item.rotation)) throw new Error('Invalid prop.');
+    for(const tile of footprint(item)){
+      const index=key(tile.x,tile.y);
+      if(!onGrid(tile.x,tile.y)||occupied.has(index)) throw new Error('A prop overlaps another prop, doorway, or room edge.');
+      occupied.add(index);
+    }
+    return {type:item.type,x:item.x,y:item.y,rotation:item.rotation};
+  });
+  return {name:data.name,items,doors};
+}
+function apply(room){ name.value=room.name; items=room.items; doors=room.doors; }
+try{
+  const draft=localStorage.getItem(draftKey);
+  if(draft) apply(decode(JSON.parse(draft)));
+}catch{ say('Could not restore the browser draft. You can open a saved JSON room.'); }
+
+const palette=Object.entries(props).map(([id,[label]])=>{
+  const button=document.createElement('button');
+  button.textContent=label;
+  byId('palette').append(button);
+  return [id,button];
+});
+palette.push(['entrance',byId('entrance')],['erase',byId('erase')]);
+for(const [id,button] of palette) button.onclick=()=>{tool=id; updateTool();};
+function updateTool(){
+  for(const [id,button] of palette) button.setAttribute('aria-pressed',String(id===tool));
+  const prop=props[tool];
+  byId('rotate').disabled=!prop||prop[2]===1;
+  byId('rotate').textContent=rotation===0?'Rotate to vertical':'Rotate to horizontal';
+  byId('prop-info').textContent=prop?
+    (rotation===0?prop[2]+' × 1':'1 × '+prop[2])+' · '+cover[prop[3]]+(prop[4]?' · Loot container':'')+(prop[5]?' · Emits light':''):
+    tool==='entrance'?'Select an empty tile along the room edge.':'Select any occupied tile to remove the whole prop or doorway.';
+}
+byId('rotate').onclick=()=>{rotation=rotation===0?90:0;updateTool();};
+const tiles=Array.from({length:size*size},(_,index)=>{
+  const button=document.createElement('button');
+  button.className='cell';
+  button.dataset.index=index;
+  button.tabIndex=index===0?0:-1;
+  grid.append(button);
+  return button;
+});
+function occupancy(){
+  const result=new Map();
+  for(const item of items) for(const tile of footprint(item)) result.set(key(tile.x,tile.y),item);
+  return result;
+}
+function render(){
+  const occupied=occupancy(), doorSet=new Set(doors.map(({x,y})=>key(x,y)));
+  tiles.forEach((button,index)=>{
+    const item=occupied.get(index), spec=item&&props[item.type], door=doorSet.has(index);
+    const anchor=Boolean(item&&index===key(item.x,item.y));
+    button.dataset.cover=spec?.[3]??'';
+    button.dataset.anchor=anchor;
+    button.dataset.entrance=door;
+    button.textContent=door?'D':anchor?spec[1]:item?'·':'';
+    button.title='Column '+(index%size+1)+', row '+(Math.floor(index/size)+1)+' · '+(door?'Doorway':spec?.[0]??'Empty floor');
+    button.setAttribute('aria-label',button.title);
+  });
+  undo.disabled=!history.length;
+  clear.disabled=!items.length&&!doors.length;
+}
+function remember(){
+  history.push({name:name.value,items,doors});
+  if(history.length>50) history.shift();
+}
+function persist(){
+  render();
+  try{localStorage.setItem(draftKey,JSON.stringify(encode()));}
+  catch{say('Browser storage is unavailable. Use Save JSON to keep this room.');}
+}
+function place(index){
+  const x=index%size,y=Math.floor(index/size), occupied=occupancy();
+  const item=occupied.get(index), door=doors.find(point=>point.x===x&&point.y===y);
+  if(tool==='erase'){
+    if(!item&&!door) return;
+    remember();
+    items=items.filter(other=>other!==item);
+    doors=doors.filter(other=>other!==door);
+    say(item?props[item.type][0]+' removed.':'Doorway removed.');
+  }else if(tool==='entrance'){
+    if(!onEdge(x,y)||item||door){say('Choose an empty tile along the room edge.');return;}
+    remember();
+    doors=[...doors,{x,y}];
+    say('Doorway placed.');
+  }else{
+    const next={type:tool,x,y,rotation:props[tool][2]===1?0:rotation};
+    if(footprint(next).some(tile=>!onGrid(tile.x,tile.y)||occupied.has(key(tile.x,tile.y))||
+      doors.some(point=>point.x===tile.x&&point.y===tile.y))){
+      say('This prop needs open floor tiles inside the room.');
+      return;
+    }
+    remember();
+    items=[...items,next];
+    say(props[tool][0]+' placed.');
+  }
+  persist();
+}
+function selectTile(index){
+  tiles[focusedTile].tabIndex=-1;
+  focusedTile=index;
+  tiles[index].tabIndex=0;
+}
+grid.onclick=event=>{
+  const button=event.target.closest('.cell');
+  if(!button) return;
+  selectTile(Number(button.dataset.index));
+  place(focusedTile);
+};
+grid.onkeydown=event=>{
+  const button=event.target.closest('.cell');
+  const direction={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];
+  if(!button||!direction) return;
+  event.preventDefault();
+  const index=Number(button.dataset.index), x=index%size+direction[0], y=Math.floor(index/size)+direction[1];
+  if(onGrid(x,y)){selectTile(key(x,y));tiles[focusedTile].focus();}
+};
+name.onchange=persist;
+undo.onclick=()=>{
+  if(!history.length) return;
+  apply(history.pop());
+  say('Last change undone.');
+  persist();
+};
+clear.onclick=()=>{
+  if(!items.length&&!doors.length) return;
+  remember();
+  items=[];
+  doors=[];
+  say('Room cleared. Undo restores it.');
+  persist();
+};
+byId('save').onclick=()=>{
+  const room=encode(), slug=room.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'dungeon-room';
+  const url=URL.createObjectURL(new Blob([JSON.stringify(room,null,2)],{type:'application/json'}));
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=slug+'.room.json';
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+byId('open').onclick=()=>file.click();
+file.onchange=async()=>{
+  const selection=file.files[0];
+  file.value='';
+  if(!selection) return;
+  try{
+    const room=decode(JSON.parse(await selection.text()));
+    remember();
+    apply(room);
+    say('Room opened. Undo restores the previous room.');
+    persist();
+  }catch(error){say(error instanceof SyntaxError?'This file is not valid JSON.':error.message);}
+};
+updateTool();
+render();
+</script>
+</body>
+</html>
