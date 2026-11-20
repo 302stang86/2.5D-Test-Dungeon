@@ -49,7 +49,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
   main.menu-open .setup, main.menu-open #reset { display:block; }
   .setup h1 { display:none; }
   .setup header, .setup p { margin-bottom:8px; }
-  #close-menu, #fullscreen, #reset { margin-top:8px; }
+  #close-menu, #fullscreen, #mobile-main-menu, #reset { margin-top:8px; }
   .readout, #message {
     position:absolute; pointer-events:none; text-shadow:0 1px 3px #000, 0 1px 3px #000;
     left:var(--safe-left); right:var(--safe-right); justify-content:center; text-align:center;
@@ -94,16 +94,62 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
   main > :not(#rotate-screen) { display:none; }
   #rotate-screen { position:absolute; inset:0; display:grid; place-content:center; text-align:center; padding:24px; }
 }
+[hidden] { display:none !important; }
+#main-menu {
+  position:fixed; inset:0; overflow:auto;
+  display:grid; place-items:safe center;
+  padding:max(16px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background:radial-gradient(ellipse at 50% 10%, #523627 0%, #251d18 45%, #100e0c 80%);
+}
+.menu-panel {
+  width:min(100%, 480px); padding:clamp(18px, 5vmin, 38px);
+  background:#17130f; border:1px solid #806345; border-top:3px solid #d3a772;
+  border-radius:12px; box-shadow:0 16px 55px #0008;
+}
+.menu-panel h1 { color:#ffe5ba; font-size:clamp(28px, 6vmin, 48px); }
+.menu-panel label { display:block; margin:18px 0 6px; color:#e4d0b4; }
+.menu-panel select, .menu-panel button { width:100%; }
+.menu-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.menu-actions button { flex:1 1 145px; }
+#start-expedition { background:#e6b769; color:#21180f; font-weight:700; }
+#start-expedition:hover { background:#f5cd8a; }
+.menu-panel details { margin-top:14px; }
+.menu-panel summary { width:fit-content; cursor:pointer; padding-block:6px; }
+.menu-panel details p { color:#d3c4af; font-size:.9rem; line-height:1.5; }
+.touch-help { display:none; }
+@media (hover:none) and (pointer:coarse) {
+  .desktop-only, .desktop-help { display:none; }
+  .touch-help { display:block; }
+}
 </style>
 </head>
 <body>
-<main>
+<section id="main-menu" aria-labelledby="menu-title">
+  <div class="menu-panel">
+    <h1 id="menu-title">2.5D Test Dungeon</h1>
+    <label for="menu-location">Expedition</label>
+    <select id="menu-location"></select>
+    <div class="menu-actions">
+      <button id="resume-expedition" hidden>Resume Expedition</button>
+      <button id="start-expedition">Start Expedition</button>
+    </div>
+    <details>
+      <summary>How to Play</summary>
+      <p>Recover the main supply crate and return to the entrance.</p>
+      <p class="desktop-help">Use WASD to move, drag to aim, F to interact, Space or click to attack, G to equip or stow, R to reload, and H to use a bandage. Press Esc to return to the menu.</p>
+      <p class="touch-help">Play in landscape. Move with the joystick and drag the view to aim. Hold Crouch to stay low and stationary while you use the action buttons.</p>
+    </details>
+  </div>
+</section>
+<main hidden>
 <section class="setup" aria-label="Expedition settings">
 <header>
 <h1>2.5D Test Dungeon</h1>
 <div class="toolbar" role="group" aria-label="View">
 <button id="map" aria-pressed="false">Top-down</button>
 <button id="eye" aria-pressed="true">First-person</button>
+<button id="desktop-main-menu" class="desktop-only">Main Menu</button>
 </div>
 </header>
 <label for="location">Expedition</label> <select id="location"></select>
@@ -112,8 +158,9 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <p id="objective"></p>
 <button class="mobile-only" id="fullscreen">Fullscreen</button>
 <button class="mobile-only" id="close-menu">Back to game</button>
+<button class="mobile-only" id="mobile-main-menu">Main Menu</button>
 </section>
-<div class="stage"><canvas id="view" width="480" height="300" aria-label="Dungeon game view"></canvas></div>
+<div class="stage"><canvas id="view" tabindex="-1" width="480" height="300" aria-label="Dungeon game view"></canvas></div>
 <div class="readout"><p id="position"></p><p id="inventory"></p><p id="guard-status" role="status"></p></div>
 <p id="message" role="status"></p>
 <div class="controls" aria-label="Game controls">
@@ -137,6 +184,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <div class="mobile-only" id="rotate-screen">
 <p>Rotate your device to play in landscape.</p>
 <button id="landscape">Try fullscreen</button>
+<button id="portrait-main-menu">Main Menu</button>
 </div>
 </main>
 <script>
@@ -321,14 +369,19 @@ const byId = id => document.getElementById(id);
 const mobile = matchMedia('(hover:none) and (pointer:coarse)');
 const portrait = matchMedia('(orientation:portrait)');
 const main = document.querySelector('main');
+const mainMenu=byId('main-menu'), menuLocation=byId('menu-location');
+const resumeExpedition=byId('resume-expedition'), startExpedition=byId('start-expedition');
+let expeditionStarted=false;
+const canResume=()=>expeditionStarted && !defeated && !escaped;
 const joystick = byId('joystick'), stick = byId('stick'), crouch = byId('crouch');
 let joystickPointer, crouchPointer, stickX=0, stickY=0;
-const mobilePaused = () => mobile.matches && (portrait.matches || main.classList.contains('menu-open'));
+const gamePaused = () => main.hidden || (mobile.matches && (portrait.matches || main.classList.contains('menu-open')));
 const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
 for (const tier of DUNGEON_TIERS) locationSelect.add(new Option(tier.name,tier.id));
 locationSelect.add(new Option('Rival Stronghold','rival'));
 locationSelect.add(new Option('Acid Chamber Field Test','acid-test'));
+menuLocation.replaceChildren(...Array.from(locationSelect.options, option=>option.cloneNode(true)));
 const finishSelect=byId('acid-finish');
 finishSelect.onchange=()=>{
   smoothAcid=finishSelect.value==='smooth';
@@ -2080,7 +2133,12 @@ function setMode(next) {
 }
 const moveKeys = new Set(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright']);
 addEventListener('keydown',event => {
-  if (mobilePaused() || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key==='Escape' && !main.hidden && !event.target.closest('select') && !event.repeat) {
+    showMainMenu();
+    return;
+  }
+  if (gamePaused()) return;
   if (event.target.closest('select')) return;
   const key = event.key.toLowerCase();
   if (moveKeys.has(key)) { keys.add(key); event.preventDefault(); }
@@ -2129,14 +2187,14 @@ function moveJoystick(event){
   stick.style.transform=`translate(${stickX*radius}px,${stickY*radius}px)`;
 }
 joystick.addEventListener('pointerdown',event=>{
-  if(!mobile.matches || mobilePaused() || event.pointerType!=='touch' || joystickPointer!==undefined) return;
+  if(!mobile.matches || gamePaused() || event.pointerType!=='touch' || joystickPointer!==undefined) return;
   joystick.setPointerCapture(event.pointerId);
   joystickPointer=event.pointerId;
   moveJoystick(event);
 });
 joystick.addEventListener('pointermove',moveJoystick);
 crouch.addEventListener('pointerdown',event=>{
-  if(!mobile.matches || mobilePaused() || event.pointerType!=='touch' || crouchPointer!==undefined || defeated || escaped) return;
+  if(!mobile.matches || gamePaused() || event.pointerType!=='touch' || crouchPointer!==undefined || defeated || escaped) return;
   crouch.setPointerCapture(event.pointerId);
   crouchPointer=event.pointerId;
   eyeHeight=CROUCHED_EYE_HEIGHT;
@@ -2162,6 +2220,31 @@ async function enterLandscape(){
     // The portrait screen continues to require landscape if locking is unavailable.
   }
 }
+function showMainMenu(){
+  if(document.fullscreenElement===main) document.exitFullscreen().catch(()=>{});
+  setMenu(false);
+  menuLocation.value=locationSelect.value;
+  resumeExpedition.hidden=!canResume();
+  startExpedition.textContent=canResume()?'New Expedition':'Start Expedition';
+  main.hidden=true;
+  mainMenu.hidden=false;
+  (canResume()?resumeExpedition:menuLocation).focus({preventScroll:true});
+}
+function showGame(){
+  mainMenu.hidden=true;
+  main.hidden=false;
+  (mobile.matches && portrait.matches ? byId('portrait-main-menu') : canvas).focus({preventScroll:true});
+}
+startExpedition.onclick=()=>{
+  if(canResume() && !window.confirm('Starting a new expedition will end your current run. Continue?')) return;
+  locationSelect.value=menuLocation.value;
+  setMode('eye');
+  restart();
+  expeditionStarted=true;
+  showGame();
+};
+resumeExpedition.onclick=()=>{ if(canResume()) showGame(); };
+for(const id of ['desktop-main-menu','mobile-main-menu','portrait-main-menu']) byId(id).onclick=showMainMenu;
 byId('menu').onclick=()=>setMenu(true);
 byId('close-menu').onclick=()=>setMenu(false);
 byId('fullscreen').onclick=async()=>{ await enterLandscape(); setMenu(false); };
@@ -2180,7 +2263,7 @@ for (const button of buttons) {
   }
 }
 canvas.addEventListener('pointerdown',event => {
-  if(mobilePaused() || mode!=='eye' || drag || (event.pointerType==='mouse' && event.button!==0)) return;
+  if(gamePaused() || mode!=='eye' || drag || (event.pointerType==='mouse' && event.button!==0)) return;
   drag={id:event.pointerId,x:event.clientX,y:event.clientY,travel:0,mouse:event.pointerType==='mouse'};
   canvas.setPointerCapture(event.pointerId);
 });
@@ -2215,13 +2298,13 @@ for(const [id, action] of Object.entries({
 })){
   const button=byId(id);
   button.addEventListener('pointerdown',event=>{
-    if(mobile.matches && event.pointerType==='touch' && !mobilePaused() && !button.disabled){
+    if(mobile.matches && event.pointerType==='touch' && !gamePaused() && !button.disabled){
       event.preventDefault();
       action();
     }
   });
   button.addEventListener('click',event=>{
-    if(!mobilePaused() && (!mobile.matches || event.pointerType!=='touch')) action();
+    if(!gamePaused() && (!mobile.matches || event.pointerType!=='touch')) action();
   });
 }
 const down = key => keys.has(key) || [...held.values()].includes(key);
@@ -2229,7 +2312,7 @@ let previous, lastRender;
 function frame(now) {
   const dt = Math.min(.033,(now-(previous ?? now))/1000);
   previous = now;
-  if(mobilePaused()){
+  if(gamePaused()){
     requestAnimationFrame(frame);
     return;
   }
@@ -2277,7 +2360,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 ctx.imageSmoothingEnabled=true;
-restart();
 requestAnimationFrame(frame);
 </script>
 </body>
