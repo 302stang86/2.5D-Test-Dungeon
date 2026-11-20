@@ -53,6 +53,18 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
  .palette { display:flex; max-height:150px; }
  .tools,.map { padding:10px; }
 }
+
+.cell[data-selected=true] { background:#4d563e; box-shadow:inset 0 0 0 2px #f4cd7d; }
+.cell[data-preview=valid] { background:#355941; box-shadow:inset 0 0 0 2px #9dd5a6; }
+.cell[data-preview=blocked] { background:#653d35; box-shadow:inset 0 0 0 2px #f1a498; }
+.cell .prop-thumb[data-wide=true] { width:calc(200% + 4px); }
+.cell .prop-thumb[data-vertical=true] { width:calc(200% + 4px); transform-origin:0 0; transform:translateX(calc(50% - 2px)) rotate(90deg); }
+.cell .prop-thumb[data-turn=true] { transform:rotate(90deg); }
+.cell .placed-art { z-index:1; }
+.cell .preview-art { z-index:2; opacity:.65; }
+.cell[data-moving=true] .placed-art { opacity:.3; }
+#grid { isolation:isolate; }
+.edit-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -68,7 +80,12 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
 <button id="entrance" aria-pressed="false">Doorway</button>
 <button id="erase" aria-pressed="false">Erase</button>
 </div>
-<p id="status" role="status">Choose a prop and select a floor tile.</p>
+<div class="edit-actions" role="group" aria-label="Edit placed props">
+<button id="select-item" aria-pressed="false">Select item</button>
+<button id="move-item" disabled>Move</button>
+<button id="rotate-item" disabled>Rotate selected</button>
+</div>
+<p id="status" role="status">Hover or tap a tile to preview a prop.</p>
 </section>
 <section class="map" aria-label="Room layout">
 <div class="toolbar">
@@ -155,6 +172,8 @@ const file=byId('file'), undo=byId('undo'), clear=byId('clear');
 const draftKey='dungeon-room-editor-v1';
 let items=[], doors=[], tool='pillar', rotation=0, focusedTile=0;
 const history=[];
+let selected=null, moving=false, previewIndex=null, touchIndex=null;
+const moveButton=byId('move-item'), rotateItem=byId('rotate-item');
 const key=(x,y)=>y*size+x;
 const onGrid=(x,y)=>x>=0&&y>=0&&x<size&&y<size;
 const onEdge=(x,y)=>x===0||y===0||x===size-1||y===size-1;
@@ -192,7 +211,7 @@ function decode(data){
   });
   return {name:data.name,items,doors};
 }
-function apply(room){ name.value=room.name; items=room.items; doors=room.doors; }
+function apply(room){ name.value=room.name; items=room.items; doors=room.doors; selected=null; moving=false; previewIndex=touchIndex=null; }
 try{
   const draft=localStorage.getItem(draftKey);
   if(draft) apply(decode(JSON.parse(draft)));
@@ -212,18 +231,29 @@ const palette=Object.entries(props).map(([id,[label]])=>{
   byId('palette').append(button);
   return [id,button];
 });
-palette.push(['entrance',byId('entrance')],['erase',byId('erase')]);
-for(const [id,button] of palette) button.onclick=()=>{tool=id; updateTool();};
+palette.push(['entrance',byId('entrance')],['erase',byId('erase')],['select',byId('select-item')]);
+for(const [id,button] of palette) button.onclick=()=>{
+  tool=id;
+  selected=null;
+  moving=false;
+  previewIndex=touchIndex=null;
+  render();
+};
 function updateTool(){
   for(const [id,button] of palette) button.setAttribute('aria-pressed',String(id===tool));
+  moveButton.disabled=!selected;
+  moveButton.textContent=moving?'Cancel move':'Move';
+  rotateItem.disabled=!selected||moving;
   const prop=props[tool];
-  byId('rotate').disabled=!prop||prop[2]===1;
+  byId('rotate').disabled=!prop;
   byId('rotate').textContent=rotation===0?'Rotate to vertical':'Rotate to horizontal';
   byId('prop-info').textContent=prop?
     (rotation===0?prop[2]+' × 1':'1 × '+prop[2])+' · '+cover[prop[3]]+(prop[4]?' · Loot container':'')+(prop[5]?' · Emits light':''):
-    tool==='entrance'?'Select an empty tile along the room edge.':'Select any occupied tile to remove the whole prop or doorway.';
+    tool==='entrance'?'Select an empty tile along the room edge.':
+    tool==='select'?(selected?props[selected.type][0]+(moving?' · Choose a destination.':' selected.'):'Select any tile occupied by a prop.'):
+    'Select any occupied tile to remove the whole prop or doorway.';
 }
-byId('rotate').onclick=()=>{rotation=rotation===0?90:0;updateTool();};
+byId('rotate').onclick=()=>{rotation=rotation===0?90:0;touchIndex=null;render();};
 const tiles=Array.from({length:size*size},(_,index)=>{
   const button=document.createElement('button');
   button.className='cell';
@@ -237,29 +267,52 @@ function occupancy(){
   for(const item of items) for(const tile of footprint(item)) result.set(key(tile.x,tile.y),item);
   return result;
 }
+function candidate(index){
+  const coordinates={x:index%size,y:Math.floor(index/size)};
+  return moving?{...selected,...coordinates}:props[tool]?{type:tool,...coordinates,rotation}:null;
+}
+function fits(item, occupied, ignore=null){
+  return footprint(item).every(({x,y})=>onGrid(x,y)&&
+    (!occupied.has(key(x,y))||occupied.get(key(x,y))===ignore)&&
+    !doors.some(door=>door.x===x&&door.y===y));
+}
+function paintArt(button,item,preview=false){
+  const image=propThumbnail(item.type);
+  image.classList.add(preview?'preview-art':'placed-art');
+  const wide=props[item.type][2]>1;
+  image.dataset.wide=wide&&item.rotation===0;
+  image.dataset.vertical=wide&&item.rotation===90;
+  image.dataset.turn=!wide&&item.rotation===90;
+  button.append(image);
+}
 function render(){
   const occupied=occupancy(), doorSet=new Set(doors.map(({x,y})=>key(x,y)));
+  const ghost=previewIndex===null?null:candidate(previewIndex);
+  const ghostTiles=ghost?new Set(footprint(ghost).filter(({x,y})=>onGrid(x,y)).map(({x,y})=>key(x,y))):null;
+  const allowed=ghost&&fits(ghost,occupied,moving?selected:null);
   tiles.forEach((button,index)=>{
     const item=occupied.get(index), spec=item&&props[item.type], door=doorSet.has(index);
     const anchor=Boolean(item&&index===key(item.x,item.y));
     button.dataset.cover=spec?.[3]??'';
     button.dataset.anchor=anchor;
     button.dataset.entrance=door;
-    const art=button.querySelector('img');
-    if(anchor){
-      if(art?.dataset.type!==item.type){
-        const thumbnail=propThumbnail(item.type);
-        thumbnail.dataset.type=item.type;
-        button.replaceChildren(thumbnail);
-      }
-    }else{
-      button.textContent=door?'D':item?'·':'';
+    button.dataset.selected=Boolean(item&&item===selected);
+    button.dataset.moving=Boolean(item&&item===selected&&moving);
+    button.dataset.preview=ghostTiles?.has(index)?(allowed?'valid':'blocked'):'';
+    const artKey=[anchor?item.type:'',anchor?item.rotation:'',allowed&&index===previewIndex?ghost.type:'',
+      allowed&&index===previewIndex?ghost.rotation:'',door,item&&!anchor?'occupied':''].join('|');
+    if(button.dataset.art!==artKey){
+      button.dataset.art=artKey;
+      button.textContent=door?'D':item&&!anchor?'·':'';
+      if(anchor) paintArt(button,item);
+      if(allowed&&index===previewIndex) paintArt(button,ghost,true);
     }
     button.title='Column '+(index%size+1)+', row '+(Math.floor(index/size)+1)+' · '+(door?'Doorway':spec?.[0]??'Empty floor');
     button.setAttribute('aria-label',button.title);
   });
   undo.disabled=!history.length;
   clear.disabled=!items.length&&!doors.length;
+  updateTool();
 }
 function remember(){
   history.push({name:name.value,items,doors});
@@ -270,9 +323,44 @@ function persist(){
   try{localStorage.setItem(draftKey,JSON.stringify(encode()));}
   catch{say('Browser storage is unavailable. Use Save JSON to keep this room.');}
 }
+function replaceSelected(next,message){
+  remember();
+  items=items.map(item=>item===selected?next:item);
+  selected=next;
+  moving=false;
+  previewIndex=touchIndex=null;
+  say(message);
+  persist();
+}
+moveButton.onclick=()=>{
+  if(!selected) return;
+  moving=!moving;
+  previewIndex=touchIndex=null;
+  say(moving?'Choose a destination tile for the selected prop.':'Move canceled.');
+  render();
+};
+rotateItem.onclick=()=>{
+  if(!selected||moving) return;
+  const next={...selected,rotation:selected.rotation===0?90:0};
+  if(!fits(next,occupancy(),selected)){say('There is not enough room to rotate this prop.');return;}
+  replaceSelected(next,props[next.type][0]+' rotated.');
+};
 function place(index){
   const x=index%size,y=Math.floor(index/size), occupied=occupancy();
   const item=occupied.get(index), door=doors.find(point=>point.x===x&&point.y===y);
+  if(moving){
+    const next=candidate(index);
+    if(!fits(next,occupied,selected)){say('That destination is blocked.');return;}
+    if(next.x===selected.x&&next.y===selected.y){moveButton.onclick();return;}
+    replaceSelected(next,props[next.type][0]+' moved.');
+    return;
+  }
+  if(tool==='select'){
+    selected=item??null;
+    say(item?props[item.type][0]+' selected.':'Select a tile occupied by a prop.');
+    render();
+    return;
+  }
   if(tool==='erase'){
     if(!item&&!door) return;
     remember();
@@ -285,14 +373,14 @@ function place(index){
     doors=[...doors,{x,y}];
     say('Doorway placed.');
   }else{
-    const next={type:tool,x,y,rotation:props[tool][2]===1?0:rotation};
-    if(footprint(next).some(tile=>!onGrid(tile.x,tile.y)||occupied.has(key(tile.x,tile.y))||
-      doors.some(point=>point.x===tile.x&&point.y===tile.y))){
+    const next=candidate(index);
+    if(!fits(next,occupied)){
       say('This prop needs open floor tiles inside the room.');
       return;
     }
     remember();
     items=[...items,next];
+    previewIndex=null;
     say(props[tool][0]+' placed.');
   }
   persist();
@@ -302,10 +390,37 @@ function selectTile(index){
   focusedTile=index;
   tiles[index].tabIndex=0;
 }
+function showPreview(index){
+  if(previewIndex===index) return;
+  previewIndex=index;
+  render();
+}
+grid.onpointerover=event=>{
+  const button=event.target.closest('.cell');
+  if(button&&event.pointerType!=='touch') showPreview(Number(button.dataset.index));
+};
+grid.onpointerleave=event=>{if(event.pointerType!=='touch') showPreview(null);};
+grid.onpointerdown=event=>{
+  const button=event.target.closest('.cell');
+  if(button) button.dataset.input=event.pointerType;
+};
+grid.onfocusin=event=>{
+  const button=event.target.closest('.cell');
+  if(button?.matches(':focus-visible')) showPreview(Number(button.dataset.index));
+};
 grid.onclick=event=>{
   const button=event.target.closest('.cell');
   if(!button) return;
   selectTile(Number(button.dataset.index));
+  const touch=event.detail!==0&&(event.pointerType||button.dataset.input)==='touch';
+  if(touch&&candidate(focusedTile)&&touchIndex!==focusedTile){
+    touchIndex=focusedTile;
+    showPreview(focusedTile);
+    say(fits(candidate(focusedTile),occupancy(),moving?selected:null)?
+      'Tap the same tile again to confirm.':'That placement is blocked. Try another tile.');
+    return;
+  }
+  touchIndex=null;
   place(focusedTile);
 };
 grid.onkeydown=event=>{
@@ -314,7 +429,7 @@ grid.onkeydown=event=>{
   if(!button||!direction) return;
   event.preventDefault();
   const index=Number(button.dataset.index), x=index%size+direction[0], y=Math.floor(index/size)+direction[1];
-  if(onGrid(x,y)){selectTile(key(x,y));tiles[focusedTile].focus();}
+  if(onGrid(x,y)){selectTile(key(x,y));tiles[focusedTile].focus();showPreview(focusedTile);}
 };
 name.onchange=persist;
 undo.onclick=()=>{
@@ -328,6 +443,9 @@ clear.onclick=()=>{
   remember();
   items=[];
   doors=[];
+  selected=null;
+  moving=false;
+  previewIndex=touchIndex=null;
   say('Room cleared. Undo restores it.');
   persist();
 };
