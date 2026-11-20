@@ -236,7 +236,7 @@ const ARCH_LEFT=Math.floor(ARCH_HALF), ARCH_RIGHT=ARCH_WIDTH-ARCH_LEFT;
 const ROOM_CENTER=ROOM_LEFT+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
-let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,recoveredCache,turn;
+let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,ceilingLights,site,health,lootBag,purse,picks,potions,defeated,recoveredCache,turn;
 const canvas = document.querySelector('#view');
 const desktop=globalThis.matchMedia?.('(min-width: 900px) and (pointer: fine)').matches;
 if(desktop){ canvas.width=640; canvas.height=400; }
@@ -294,7 +294,6 @@ function decorateRoom(theme,x,y){
       actors.push({kind:'pillar',x:x+dx,y:y+dy,radius:.73,height:CEILING_HEIGHT});
       actors.push({kind:'spores',x:x+dx+.52,y:y+dy+.53,height:.61,lift:.12});
     }
-    for(const side of [-1,1]) actors.push({kind:'torch',x:x+side*6.08,y:y-1,lift:.38,height:.52,wallMount:true});
   } else if(theme.prop){
     const low=['pool','spikes','rubble','vents'].includes(theme.prop);
     actors.push({kind:'furnishing',art:theme.prop,x:x-3.8,y:y+3.65,
@@ -400,6 +399,7 @@ function restart() {
   doorVersion=0;
   ironKey=false;
   actors=[];
+  ceilingLights=[];
   const vaultKey=layout.vaultKey ?? roomKey(layout.tiles.find(t=>t.type===0));
   if(site?.id==='dungeon-high' && !layout.tiles.some(t=>t.dungeonTrap==='acid')){
     const trap=layout.tiles.find(t=>t.dungeonTrap);
@@ -443,7 +443,6 @@ function restart() {
         room[rowIndex][col]='A';
         doors.set(cellKey(col,rowIndex),arch);
       }
-      if(theme.id!=='acid') actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*.32,y:arch.y-dy*1.5+Math.abs(dx)*.32,lift:.38,height:.52});
     }
 
     const resourceKinds=production[t.type] ?? [];
@@ -464,8 +463,11 @@ function restart() {
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
     decorateRoom(theme,x,y);
-    if(theme.id!=='acid' && (t.type===17 || key===vaultKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1))){
-      actors.push({kind:'torch',x:x-(hall?.32:2.22),y:y-(hall?.32:1.83),lift:.38,height:.52});
+    if(hall){
+      const alongX=!exits(t).some(direction=>direction%2===0);
+      ceilingLights.push({x,y,halfWidth:alongX?.99:.18,halfLength:alongX?.18:.99});
+    } else {
+      for(const offset of [-3,3]) ceilingLights.push({x:x+offset,y,halfWidth:.18,halfLength:1.25});
     }
 
   }
@@ -487,7 +489,6 @@ function restart() {
   clearWeaponAction();
   placeWeapons(layout.tiles,entrance,center);
   pillars=actors.filter(a=>a.kind==='pillar');
-  torches=actors.filter(a=>a.kind==='torch');
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
   health=100;
   lootBag={gold:0,stone:0,food:0,rp:0};
@@ -500,7 +501,7 @@ function restart() {
   lastRender=undefined;
   byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
-  if(fieldTest) tell('Walk around the pillars and look toward the torches. Use Acid chamber finish to compare materials.');
+  if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
   else tell('Pick up the iron key ahead. Use F or Interact at doors, crates, and weapon pickups. Watch for traps.');
 }
 
@@ -881,11 +882,7 @@ const sprites={
     rect('#704529',3,5,3,11); rect('#704529',20,5,3,11);
     rect('#9d673d',0,3,26,5); rect('#c08a57',2,2,22,2);
   }),
-  torch:surface(14,26,rect => {
-    rect('#593a24',6,13,3,13); rect('#a86a35',5,12,5,4);
-    rect('#d65720',3,5,9,8); rect('#ff942e',5,2,5,10);
-    rect('#ffe298',6,6,3,7);
-  })
+
 };
 sprites.key=surface(24,12,rect=>{
   rect('#d9a749',2,1,8,9); rect('#654724',4,3,4,4); rect('#ffd46c',9,4,13,3); rect('#d9a749',18,6,4,4);
@@ -999,10 +996,10 @@ for(const theme of Object.values(themes)){
 function usesSmoothFinish(theme){ return theme.id!=='acid'||smoothAcid; }
 function bakeRoomLight(left,top){
   left+=1; top+=1;
-  const nearby=torches.filter(t=>t.x>=left-.5 && t.x<=left+ROOM_SIZE+.5 && t.y>=top-.5 && t.y<=top+ROOM_SIZE+.5);
+  const nearby=ceilingLights.filter(t=>t.x>=left-.5 && t.x<=left+ROOM_SIZE+.5 && t.y>=top-.5 && t.y<=top+ROOM_SIZE+.5);
   const columns=pillars.filter(p=>p.x>=left && p.x<=left+ROOM_SIZE && p.y>=top && p.y<=top+ROOM_SIZE);
   const values=new Float32Array(FIELD_LIGHT_SIZE**2);
-  const warm=new Float32Array(values.length);
+  const cool=new Float32Array(values.length);
   for(let y=0;y<FIELD_LIGHT_SIZE;y++) for(let x=0;x<FIELD_LIGHT_SIZE;x++){
     const wx=left+x/FIELD_SAMPLES,wy=top+y/FIELD_SAMPLES;
     const px=Math.floor(wx),py=Math.floor(wy);
@@ -1012,13 +1009,13 @@ function bakeRoomLight(left,top){
       solid(px,py-1)?1-edgeY:0,solid(px,py+1)?edgeY:0);
     let shadow=corner**2*.17,tint=0;
     for(const pillar of columns) shadow=Math.max(shadow,.34*Math.exp(-((wx-pillar.x)**2+(wy-pillar.y)**2)/1.2));
-    for(const torch of nearby) tint+=.78*Math.exp(-((wx-torch.x)**2+(wy-torch.y)**2)/12);
+    for(const lamp of nearby) tint+=.66*Math.exp(-((wx-lamp.x)**2+(wy-lamp.y)**2)/6);
     const i=y*FIELD_LIGHT_SIZE+x;
     const stain=Math.sin(wx*.47+Math.cos(wy*.32))*Math.cos(wy*.52+Math.sin(wx*.29));
-    values[i]=1.14-shadow+stain*.15;
-    warm[i]=Math.min(1,tint);
+    values[i]=.73-shadow*.55+stain*.09;
+    cool[i]=Math.min(1,tint);
   }
-  return {left,top,values,warm};
+  return {left,top,values,cool,fixtures:nearby};
 }
 function sampleRoomLight(field,x,y,result){
   const px=Math.max(0,Math.min(FIELD_LIGHT_SIZE-1.001,(x-field.left)*FIELD_SAMPLES));
@@ -1026,9 +1023,9 @@ function sampleRoomLight(field,x,y,result){
   const ix=Math.floor(px),iy=Math.floor(py),fx=px-ix,fy=py-iy;
   const i=iy*FIELD_LIGHT_SIZE+ix;
   const w0=(1-fx)*(1-fy),w1=fx*(1-fy),w2=(1-fx)*fy,w3=fx*fy;
-  const j=i+FIELD_LIGHT_SIZE, light=field.values, warm=field.warm;
+  const j=i+FIELD_LIGHT_SIZE, light=field.values, cool=field.cool;
   result[0]=light[i]*w0+light[i+1]*w1+light[j]*w2+light[j+1]*w3;
-  result[1]=warm[i]*w0+warm[i+1]*w1+warm[j]*w2+warm[j+1]*w3;
+  result[1]=cool[i]*w0+cool[i+1]*w1+cool[j]*w2+cool[j+1]*w3;
 }
 
 function renderPlanes(fx,fy,rx,ry,flicker) {
@@ -1044,25 +1041,28 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
     const light = Math.max(.17, 1/(1+distance*.27))*(isFloor?1:.65);
     for (let x=0; x<width; x++) {
       const theme=themeAt(worldX,worldY);
-      const field=usesSmoothFinish(theme) ?
-        roomLights[Math.floor(worldY/ROOM_SPACING)]?.[Math.floor(worldX/ROOM_SPACING)] : null;
+      const field=roomLights[Math.floor(worldY/ROOM_SPACING)]?.[Math.floor(worldX/ROOM_SPACING)];
       const index=(y*width+x)*4;
-      if(field){
-        sampleRoomLight(field,worldX,worldY,lighting);
-        const [ambient,warm]=lighting;
-        const sample=(((Math.floor(worldY*96)&255)*256)+(Math.floor(worldX*96)&255))*4;
-        const glow=warm*flicker*(isFloor?1:.4);
-        const brightness=light*(ambient+glow*.8);
-        data[index]=theme.smoothFloor[sample]*brightness+glow*34;
-        data[index+1]=theme.smoothFloor[sample+1]*brightness+glow*16;
-        data[index+2]=theme.smoothFloor[sample+2]*brightness+glow*5;
-      } else {
-        const floor=theme.floor;
-        const sample=(((Math.floor(worldY*64)&63)*64)+(Math.floor(worldX*64)&63))*4;
-        const checker=(Math.floor(worldX)+Math.floor(worldY))&1 ? .85 : 1;
-        data[index]=floor[sample]*light*checker;
-        data[index+1]=floor[sample+1]*light*checker;
-        data[index+2]=floor[sample+2]*light*checker;
+      lighting[0]=.54; lighting[1]=0;
+      if(field) sampleRoomLight(field,worldX,worldY,lighting);
+      const smooth=usesSmoothFinish(theme), mask=smooth?255:63, scale=smooth?96:64;
+      const texture=smooth?theme.smoothFloor:theme.floor;
+      const sample=((Math.floor(worldY*scale)&mask)*(mask+1)+(Math.floor(worldX*scale)&mask))*4;
+      const glow=lighting[1]*flicker;
+      const brightness=light*(lighting[0]+glow*.6);
+      data[index]=texture[sample]*brightness+glow*6;
+      data[index+1]=texture[sample+1]*brightness+glow*13;
+      data[index+2]=texture[sample+2]*brightness+glow*22;
+      if(!isFloor && field && glow>.3){
+        for(const lamp of field.fixtures){
+          const dx=Math.abs(worldX-lamp.x),dy=Math.abs(worldY-lamp.y);
+          if(dx>=lamp.halfWidth || dy>=lamp.halfLength) continue;
+          const rim=dx>lamp.halfWidth-.045 || dy>lamp.halfLength-.055;
+          data[index]=rim?67:212*flicker;
+          data[index+1]=rim?76:235*flicker;
+          data[index+2]=rim?88:250*flicker;
+          break;
+        }
       }
       data[index+3] = 255;
       worldX += step*rx;
@@ -1135,14 +1135,9 @@ function renderFirstPerson(flicker) {
       paintArch(x,d,lateral,face);
     }
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
-    let torchLight=0;
-    for (const torch of torches) {
-      const dx=torch.x-hitX,dy=torch.y-hitY;
-      if(Math.abs(dx)>3.2||Math.abs(dy)>3.2) continue;
-      torchLight=Math.max(torchLight,.3-Math.hypot(dx,dy)*.095);
-    }
-    const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
-    ctx.fillStyle = `rgba(13,10,11,${Math.max(0,1-light-torchLight*flicker)})`;
+    const ceilingGlow=ceilingLightAt(hitX-dx*.02,hitY-dy*.02)*flicker;
+    const light=(hit.side==='x'?.75:.62)/(1+d*.16);
+    ctx.fillStyle=`rgba(10,13,19,${Math.max(0,1-light-ceilingGlow*.33)})`;
     ctx.fillRect(x,top,1,h);
     if(smooth){
       const stain=(Math.sin(hitX*.49)*Math.cos(hitY*.47)+1)*.075;
@@ -1150,16 +1145,16 @@ function renderFirstPerson(flicker) {
       ctx.fillStyle=`rgba(${color},${stain})`;
       ctx.fillRect(x,top,1,h);
     }
-    if(smooth && torchLight>0){
-      ctx.fillStyle=`rgba(254,142,61,${torchLight*flicker*.72})`;
+    if(ceilingGlow>0){
+      ctx.fillStyle=`rgba(171,213,247,${ceilingGlow*.19})`;
       ctx.fillRect(x,top,1,h);
     }
     openings[x]=openings[x].filter(opening=>opening.distance<d);
     for(const opening of openings[x].reverse()){
       const entry=Math.max(0,opening.distance-.02);
       const theme=themeAt(player.x+dx*entry,player.y+dy*entry);
-      const warm=usesSmoothFinish(theme) ? archWarmth(player.x+dx*entry,player.y+dy*entry)*flicker : 0;
-      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open',warm);
+      const glow=ceilingLightAt(player.x+dx*entry,player.y+dy*entry)*flicker;
+      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open',glow);
     }
   }
 
@@ -1173,7 +1168,6 @@ function renderFirstPerson(flicker) {
     const start = width/2+lateral*scale-w/2;
     const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
     const top = horizon+(EYE_HEIGHT-lift)*scale-h;
-    if (a.kind === 'torch') drawTorchGlow(width/2+lateral*scale,top+h*.3,Math.max(4,h*.95),d,flicker);
     ctx.globalAlpha = Math.max(.6,1-d*.032);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
       if(depth[x]<=d) continue;
@@ -1192,22 +1186,22 @@ function renderFirstPerson(flicker) {
   }
   drawPunchImpact(fx,fy,rx,ry);
   const field=roomLights[Math.floor(player.y/ROOM_SPACING)]?.[Math.floor(player.x/ROOM_SPACING)];
-  const sector=[1,0];
+  const sector=[.73,0];
   if(field) sampleRoomLight(field,player.x,player.y,sector);
-  const light=Math.min(1.24,sector[0]*.72+sector[1]*flicker*.49),warmth=sector[1]*flicker;
+  const light=Math.min(1.24,sector[0]*.84+sector[1]*flicker*.45),warmth=0;
   const item=activeWeapon();
   if(item) drawWeaponModel(item,light,warmth);
   else viewmodel.render(ctx,width,height,light,warmth);
   drawCrosshair();
 }
 const archLighting=[0,0];
-function archWarmth(x,y){
+function ceilingLightAt(x,y){
   const field=roomLights[Math.floor(y/ROOM_SPACING)]?.[Math.floor(x/ROOM_SPACING)];
   if(!field) return 0;
   sampleRoomLight(field,x,y,archLighting);
   return archLighting[1];
 }
-function paintArch(column,distance,lateral,theme,openLeaf=false,warm=0){
+function paintArch(column,distance,lateral,theme,openLeaf=false,glow=0){
   const scale=focal/Math.max(.01,distance);
   const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
   const {arch,base,accent}=theme.design;
@@ -1230,8 +1224,8 @@ function paintArch(column,distance,lateral,theme,openLeaf=false,warm=0){
     ctx.fillStyle=accent==='runes'?'#b388db':accent==='goldLine'?'#e1c783':'#eee6d8';
     ctx.fillRect(column,lip-trim*.38,1,trim*.24);
   }
-  if(warm>0){
-    ctx.fillStyle=`rgba(255,153,70,${warm*.22})`;
+  if(glow>0){
+    ctx.fillStyle=`rgba(171,213,247,${glow*.22})`;
     ctx.fillRect(column,top,1,lip-top);
   }
   if(openLeaf && lateral<-ARCH_WIDTH/2+.13){
@@ -1703,22 +1697,6 @@ function drawCrosshair(){
   ctx.fillRect(x-.5*scale,y-.5*scale,scale,scale);
 }
 
-function drawTorchGlow(x,y,radius,d,flicker) {
-  const left=Math.max(0,Math.floor(x-radius)), right=Math.min(width,Math.ceil(x+radius));
-  if (left>=right) return;
-  ctx.save();
-  ctx.beginPath();
-  for (let col=left; col<right; col++) {
-    if (depth[col]>d) ctx.rect(col,y-radius,1,2*radius);
-  }
-  ctx.clip();
-  const glow=ctx.createRadialGradient(x,y,0,x,y,radius);
-  glow.addColorStop(0,`rgba(255,166,56,${.42*flicker})`);
-  glow.addColorStop(1,'rgba(255,80,0,0)');
-  ctx.fillStyle=glow;
-  ctx.fillRect(left,y-radius,right-left,2*radius);
-  ctx.restore();
-}
 function renderMap(mini=false) {
   const size=Math.min(mini ? 5 : 23,(mini ? 105 : height-12)/Math.max(room.length,room[0].length));
   const left=mini ? 9 : (width-room[0].length*size)/2;
@@ -1748,11 +1726,6 @@ function renderMap(mini=false) {
       ctx.beginPath();ctx.arc(px,py,r*.52,0,Math.PI*2);ctx.fill();
       continue;
     }
-    if(a.wallMount && !mini){
-      ctx.fillStyle='#ef9b3a';
-      ctx.beginPath();ctx.arc(left+a.x*size,top+a.y*size,Math.max(.8,size*.18),0,Math.PI*2);ctx.fill();
-      continue;
-    }
     if(a.kind==='spores'){
       if(!mini){
         ctx.fillStyle='#9fba68';
@@ -1766,7 +1739,7 @@ function renderMap(mini=false) {
       continue;
     }
     if (mini || size<12) {
-      if (a.kind!=='torch' && a.kind!=='trap') {
+      if (a.kind!=='trap') {
         ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',key:'#f9e58a','iron-key':'#f9e58a',weapon:'#8ed9fa',exit:'#84cc91'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
@@ -1874,8 +1847,8 @@ function frame(now) {
   const travelled=Math.hypot(player.x-beforeX,player.y-beforeY);
   viewmodel.update(dt,dt>0?travelled/dt:0,travelled>0?strafe:0);
   updateWeapon(dt);
-  const torchTick=mode === 'eye' ? Math.floor(now/80) : 0;
-  const viewState=[mode,player.x,player.y,player.angle,turn,torchTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
+  const lightTick=mode === 'eye' ? Math.floor(now/80) : 0;
+  const viewState=[mode,player.x,player.y,player.angle,turn,lightTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
@@ -1895,7 +1868,7 @@ function frame(now) {
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
   byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}${recoveredCache?'Main supplies recovered · ':''}Loot ${loot}`;
   if (mode === 'eye') {
-    renderFirstPerson(.92+.09*Math.sin(torchTick*.8)+.04*Math.sin(torchTick*2.4));
+    renderFirstPerson(.985+.012*Math.sin(lightTick*.8));
     renderMap(true);
   } else renderMap();
   requestAnimationFrame(frame);
