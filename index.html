@@ -362,7 +362,8 @@ function fireWeapon(){
   item.ammo--;
   shotTime=WEAPONS[item.id].interval;
   const dx=Math.cos(player.angle),dy=Math.sin(player.angle),wall=cast(dx,dy);
-  const distance=tracePillar(dx,dy,pillars,wall.distance)?.distance ?? wall.distance;
+  const obstacle=tracePillar(dx,dy,pillars,wall.distance)?.distance ?? wall.distance;
+  const distance=hitGuard(dx,dy,obstacle,GUARD_DAMAGE[item.id])?.distance ?? obstacle;
   shotImpact={x:player.x+dx*distance,y:player.y+dy*distance,age:0};
   turn++;
 }
@@ -937,6 +938,7 @@ sprites.spores=surface(48,48,rect=>{
 const GUARD_RANGE=8;
 const GUARD_HALF_ANGLE=.37;
 const GUARD_RAYS=32;
+const GUARD_DAMAGE={pistol:24,shotgun:55,ar15:25,ak47:30,smg:17};
 let guard=null, guardFloor, guardWaypoints;
 const guardPassages=new Set();
 
@@ -955,7 +957,7 @@ function startGuard(){
   guard={kind:'guard',x:initial%cols+.5,y:Math.floor(initial/cols)+.5,height:.85,
     angle:Math.atan2(player.y-(Math.floor(initial/cols)+.5),player.x-(initial%cols+.5)),
     wait:1.8,path:[],pathIndex:0,waypoint:2%guardWaypoints.length,walk:0,moving:false,
-    spotted:false,beam:new Float32Array(GUARD_RAYS+1)};
+    spotted:false,hp:85,mode:'patrol',lastSeen:null,repath:0,search:0,attackCooldown:0,hitFlash:0,beam:new Float32Array(GUARD_RAYS+1)};
   actors.push(guard);
   refreshGuardBeam();
   updateGuardStatus(false);
@@ -984,39 +986,117 @@ function guardPath(target){
   return path.reverse();
 }
 
+function setGuardPath(target){
+  guard.path=guardPath(target);
+  guard.pathIndex=0;
+}
+
+function advanceGuard(x,y,dt,speed){
+  const dx=x-guard.x,dy=y-guard.y,d=Math.hypot(dx,dy);
+  const step=Math.min(d,dt*speed);
+  if(step>.00001){
+    guard.angle=Math.atan2(dy,dx);
+    const door=doors.get(cellKey(Math.floor(x),Math.floor(y)));
+    if(door && isClosed(door) && d<1.1){ guardPassages.add(door);doorVersion++; }
+    guard.x+=dx*step/d;guard.y+=dy*step/d;
+    guard.walk+=step;
+    guard.moving=true;
+  }
+  return d<=step+.001;
+}
+
+function followGuardPath(dt,speed){
+  const cols=room[0].length,point=guard.path[guard.pathIndex];
+  if(point===undefined) return false;
+  if(advanceGuard(point%cols+.5,Math.floor(point/cols)+.5,dt,speed)) guard.pathIndex++;
+  return true;
+}
+
+function releaseGuardDoors(){
+  for(const door of guardPassages){
+    if((!guard.done&&Math.hypot(door.x-guard.x,door.y-guard.y)<1.05) ||
+       Math.hypot(door.x-player.x,door.y-player.y)<.85) continue;
+    guardPassages.delete(door);doorVersion++;
+  }
+}
+
 function updateGuard(dt){
   if(!guard||escaped||defeated) return;
   guard.moving=false;
-  const cols=room[0].length;
-  if(guard.wait>0) guard.wait=Math.max(0,guard.wait-dt);
-  else if(guard.pathIndex>=guard.path.length){
-    guard.path=guardPath(guardWaypoints[guard.waypoint]);
-    guard.waypoint=(guard.waypoint+1)%guardWaypoints.length;
-    guard.pathIndex=0;
-    if(!guard.path.length) guard.wait=.5;
+  guard.hitFlash=Math.max(0,guard.hitFlash-dt);
+  if(guard.done){ releaseGuardDoors();return; }
+  guard.attackCooldown=Math.max(0,guard.attackCooldown-dt);
+  guard.repath=Math.max(0,guard.repath-dt);
+  const sees=guardSeesPlayer();
+  if(sees){
+    if(guard.mode!=='pursuit') guard.repath=0;
+    guard.mode='pursuit';
+    guard.lastSeen={x:player.x,y:player.y};
+  } else if(guard.mode==='pursuit'){
+    guard.mode='search';
+    guard.search=4;
+    guard.repath=0;
+  }
+  if(guard.mode==='patrol'){
+    if(guard.wait>0) guard.wait=Math.max(0,guard.wait-dt);
+    else if(!followGuardPath(dt,1.45)){
+      setGuardPath(guardWaypoints[guard.waypoint]);
+      guard.waypoint=(guard.waypoint+1)%guardWaypoints.length;
+      guard.wait=.65;
+    }
   } else {
-    const point=guard.path[guard.pathIndex],x=point%cols+.5,y=Math.floor(point/cols)+.5;
-    const dx=x-guard.x,dy=y-guard.y,d=Math.hypot(dx,dy);
-    const step=Math.min(d,dt*1.45);
-    if(d>.001){
-      guard.angle=Math.atan2(dy,dx);
-      const door=doors.get(point);
-      if(door && isClosed(door) && d<1.1){ guardPassages.add(door);doorVersion++; }
-      guard.x+=dx*step/d;guard.y+=dy*step/d;
-      guard.walk+=step;
-      guard.moving=step>0;
+    const target=guard.lastSeen;
+    const distance=Math.hypot(target.x-guard.x,target.y-guard.y);
+    if(sees && distance<1.02){
+      guard.angle=Math.atan2(target.y-guard.y,target.x-guard.x);
+      if(guard.attackCooldown===0){
+        guard.attackCooldown=1.15;
+        turn++;
+        tell('The guard struck you.');
+        hurt(12);
+      }
+    } else {
+      if(guard.repath===0){
+        setGuardPath(cellKey(Math.floor(target.x),Math.floor(target.y)));
+        guard.repath=.35;
+      }
+      if(!followGuardPath(dt,2.25) && sees && distance<1.8) advanceGuard(target.x,target.y,dt,2.25);
     }
-    if(d<=step+.001){
-      guard.pathIndex++;
-      if(guard.pathIndex===guard.path.length) guard.wait=.8;
+    if(guard.mode==='search'){
+      guard.search-=dt;
+      if(distance<1.2) guard.angle+=dt*1.65;
+      if(guard.search<=0){
+        guard.mode='patrol';
+        guard.path=[];guard.pathIndex=0;guard.wait=.55;
+      }
     }
   }
-  for(const door of guardPassages){
-    if(Math.hypot(door.x-guard.x,door.y-guard.y)<1.05 || Math.hypot(door.x-player.x,door.y-player.y)<.85) continue;
-    guardPassages.delete(door);doorVersion++;
-  }
+  releaseGuardDoors();
   refreshGuardBeam();
-  updateGuardStatus(guardSeesPlayer());
+  updateGuardStatus(!defeated&&guardSeesPlayer());
+}
+
+function hitGuard(dx,dy,limit,damage){
+  if(!guard||guard.done) return null;
+  const hit=tracePillar(dx,dy,[{x:guard.x,y:guard.y,radius:.36}],limit);
+  if(!hit) return null;
+  guard.hp=Math.max(0,guard.hp-damage);
+  guard.hitFlash=.16;
+  turn++;
+  if(!guard.hp){
+    guard.done=true;
+    releaseGuardDoors();
+    updateGuardStatus(false);
+    tell('Guard defeated.');
+  } else {
+    guard.mode='search';
+    guard.lastSeen={x:player.x,y:player.y};
+    guard.angle=Math.atan2(player.y-guard.y,player.x-guard.x);
+    guard.search=4;
+    guard.repath=0;
+    refreshGuardBeam();
+  }
+  return hit;
 }
 
 function guardRayLimit(dx,dy){
@@ -1041,12 +1121,14 @@ function guardSeesPlayer(){
 function updateGuardStatus(spotted){
   guard.spotted=spotted;
   const badge=byId('guard-status');
-  if(badge.textContent===(spotted?'Guard: Spotted':'Guard: Hidden')) return;
-  badge.textContent=spotted?'Guard: Spotted':'Guard: Hidden';
+  const label=guard.done?'Guard: Defeated':spotted?'Guard: Spotted':
+    guard.mode==='search'?'Guard: Searching':'Guard: Hidden';
+  if(badge.textContent===label) return;
+  badge.textContent=label;
   badge.classList.toggle('spotted',spotted);
 }
 function guardBeamAt(x,y){
-  if(!guard) return 0;
+  if(!guard||guard.done) return 0;
   const dx=x-guard.x,dy=y-guard.y,d2=dx*dx+dy*dy;
   if(d2>GUARD_RANGE*GUARD_RANGE) return 0;
   const local=Math.atan2(guard.fx*dy-guard.fy*dx,
@@ -1335,7 +1417,7 @@ function renderFirstPerson(flicker) {
     const start = width/2+lateral*scale-w/2;
     const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
     const top = horizon+(EYE_HEIGHT-lift)*scale-h;
-    ctx.globalAlpha = Math.max(.6,1-d*.032);
+    ctx.globalAlpha = Math.max(.6,1-d*.032)*(a===guard&&a.hitFlash>0?.67:1);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
       if(depth[x]<=d) continue;
       const sourceX=Math.floor((x-start)/w*sprite.width);
@@ -1827,7 +1909,8 @@ function castMeleeRay(){
   const dx=Math.cos(player.angle),dy=Math.sin(player.angle);
   const wall=cast(dx,dy);
   const pillar=tracePillar(dx,dy,pillars,Math.min(1.2,wall.distance));
-  const distance=pillar?.distance ?? wall.distance;
+  const obstacle=pillar?.distance ?? wall.distance;
+  const distance=hitGuard(dx,dy,Math.min(1.2,obstacle),20)?.distance ?? obstacle;
   if(distance>1.2) return null;
   return {x:player.x+dx*distance,y:player.y+dy*distance};
 }
@@ -1865,7 +1948,7 @@ function drawCrosshair(){
 }
 
 function renderMap(mini=false) {
-  const size=Math.min(mini ? 5 : 23,(mini ? 105 : height-12)/Math.max(room.length,room[0].length));
+  const size=Math.min(mini ? 7 : 23,(mini ? 158 : height-12)/Math.max(room.length,room[0].length));
   const left=mini ? 9 : (width-room[0].length*size)/2;
   const top=mini ? 9 : (height-room.length*size)/2;
   let layer=mapLayers.get(mini);
@@ -1884,7 +1967,7 @@ function renderMap(mini=false) {
     mapLayers.set(mini,layer);
   }
   ctx.drawImage(layer.image,0,0);
-  if(!mini && guard){
+  if(!mini && guard && !guard.done){
     ctx.fillStyle='#fce3a04d';
     ctx.beginPath();
     ctx.moveTo(left+guard.x*size,top+guard.y*size);
@@ -1933,12 +2016,14 @@ function renderMap(mini=false) {
   ctx.save();
   ctx.translate(left+player.x*size,top+player.y*size);
   ctx.rotate(player.angle);
-  const markerScale=Math.min(1,size/(mini ? 7 : 12));
+  const markerScale=mini?Math.max(.62,Math.min(1,size/5)):Math.min(1,size/12);
   ctx.scale(markerScale,markerScale);
-  ctx.fillStyle='#ffda85';
-  ctx.strokeStyle='#302214';
+  ctx.fillStyle=mini?'#43a8ff':'#ffda85';
+  ctx.strokeStyle=mini?'#10233b':'#302214';
   ctx.beginPath();
-  ctx.moveTo(9,0); ctx.lineTo(-6,-6); ctx.lineTo(-4,0); ctx.lineTo(-6,6);
+  ctx.moveTo(9,0); ctx.lineTo(-6,-6);
+  if(!mini) ctx.lineTo(-4,0);
+  ctx.lineTo(-6,6);
   ctx.closePath(); ctx.fill(); ctx.stroke();
   ctx.restore();
 }
