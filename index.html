@@ -658,6 +658,100 @@ function stone(base, mortar) {
     for (let i=0; i<280; i++) rect(i%2?'#0002':'#fff2',(i*37)%64,(i*57+Math.floor(i/8)*5)%64,1+i%2,1);
   });
 }
+// Palette values fill in the missing RGB entries in the supplied wall designs.
+const WALL_DESIGNS=[
+  ['Classic Cut Ashlar',      [136,128,118],'#302a26','ashlar','voussoir','none'],
+  ['Mossy Overgrown Keep',    [103,116,97], '#252d25','ashlar','voussoir','moss'],
+  ['Obsidian Fortress',       [67,68,80],   '#161722','largeBlock','pointed','none'],
+  ['Sandstone Crypt',         [147,119,82], '#493524','ashlar','voussoir','cracks'],
+  ['Crimson Citadel Brick',   [145,80,66],  '#3a231f','brick','stoneTrim','none'],
+  ['Frostbound Cavern',       [133,156,173],'#374957','cobble','voussoir','frost'],
+  ['Iron-Banded Vault',       [103,109,120],'#282b33','largeBlock','ironArch','bands'],
+  ['Sunken Temple',           [79,120,116], '#273b3c','ashlar','voussoir','moss'],
+  ['Royal Marble Hall',       [182,169,153],'#5d5754','marble','fluted','goldLine'],
+  ['Catacomb Cobblestone',    [109,99,95],  '#302624','cobble','voussoir','cracks'],
+  ['Plaster & Timber',        [175,150,118],'#4c3526','plaster','timber','timber'],
+  ['Dwarven Basalt',          [94,103,109], '#252c32','herring','stoneTrim','goldLine'],
+  ['Cursed Violet Sanctum',   [113,87,140], '#30253f','ashlar','pointed','runes'],
+  ['Aged Terracotta',         [162,104,72], '#473024','brick','voussoir','none'],
+  ['Blighted Sewer',          [95,104,74],  '#292d21','brick','voussoir','moss'],
+  ['Alabaster Cloister',      [177,171,165],'#625a56','ashlar','pointed','none'],
+  ['Charred Ruin',            [88,84,83],   '#221d20','ashlar','voussoir','cracks'],
+  ['Verdigris Bronze',        [87,134,117], '#243e38','largeBlock','ironArch','patina'],
+  ['Ochre Ruin Masonry',      [158,132,85], '#483721','cobble','voussoir','moss'],
+  ['Midnight Slate',          [85,101,127], '#222937','thinSlate','stoneTrim','none']
+].map(([name,base,mortar,pattern,arch,accent],index)=>({id:index+1,name,base,mortar,pattern,arch,accent}));
+const WALL_BY_ROOM={
+  stone:1,hall:20,entrance:1,storage:19,cell:10,cave:6,throne:9,vault:7,
+  kitchen:14,library:11,armory:12,war:5,crypt:4,flooded:8,arcane:13,torture:3,
+  chapel:16,barracks:5,mine:19,research:18,acid:2,spikes:3,gas:15,flame:17
+};
+const WALL_TEXTURE_SIZE=128;
+function paintedWall(design){
+  let state=design.id*9973;
+  const random=()=> {
+    state=(Math.imul(state,1664525)+1013904223)>>>0;
+    return state/4294967296;
+  };
+  const color=(amount)=>`rgb(${design.base.map(channel=>Math.max(0,Math.min(255,Math.round(channel+amount)))).join(',')})`;
+  const size=WALL_TEXTURE_SIZE;
+  return surface(size,size,(rect,g)=>{
+    rect(design.mortar,0,0,size,size);
+    const block=(x,y,w,h,radius)=>{
+      g.fillStyle=color((random()-.5)*34);
+      g.beginPath();
+      g.roundRect(x+1,y+1,w-2,h-2,radius);
+      g.fill();
+      rect('#fff3',x+radius+1,y+2,w-2*radius-2,1);
+      rect('#0005',x+radius+1,y+h-3,w-2*radius-2,2);
+    };
+    const sizes={ashlar:[43,21],largeBlock:[64,32],brick:[32,14],cobble:[26,20],marble:[64,64],
+      plaster:[64,64],thinSlate:[41,8],herring:[32,16]};
+    const [w,h]=sizes[design.pattern];
+    for(let row=0;row*h<size;row++) for(let col=-1;col*w<size;col++){
+      const x=col*w+(row%2)*Math.floor(w/2);
+      const y=row*h;
+      if(design.pattern==='herring'){
+        block(x,y,16,h,1);
+        block(x+16,y+(col%2===0?2:0),16,h-2,1);
+      } else block(x,y,w,h,design.pattern==='cobble'?7:2);
+    }
+    if(design.pattern==='plaster'){
+      for(const x of [0,61,122]) rect('#544031',x,0,6,size);
+      rect('#5c4533',0,61,size,7);
+    }
+    if(design.pattern==='marble'){
+      g.strokeStyle='#65587365';
+      for(let vein=0;vein<6;vein++){
+        g.beginPath();g.moveTo(vein*25-15,0);
+        for(let y=8;y<=size;y+=8) g.lineTo(vein*25+y*.35+(random()-.5)*13,y);
+        g.stroke();
+      }
+    }
+    for(let i=0;i<860;i++){
+      const x=random()*size,y=random()*size;
+      rect(i%2?'#fff1':'#0002',x,y,1+random()*3,1+random()*2);
+    }
+    if(['moss','frost','patina'].includes(design.accent)){
+      const tint={moss:'#79905662',frost:'#e5f3ff85',patina:'#54b3ab72'}[design.accent];
+      for(let i=0;i<95;i++) rect(tint,random()*size,size-random()**1.7*47,1+random()*5,1+random()*4);
+    }
+    if(design.accent==='bands'||design.accent==='goldLine'){
+      for(const y of [26,88]){
+        rect(design.accent==='bands'?'#292c35':'#af9155',0,y,size,design.accent==='bands'?7:2);
+        for(let x=8;x<size;x+=16) rect('#f7d7a177',x,y,2,2);
+      }
+    }
+    if(design.accent==='cracks'||design.accent==='runes'){
+      g.strokeStyle=design.accent==='runes'?'#c29ef184':'#241e20a6';
+      for(let i=0;i<8;i++){
+        const x=random()*size,y=random()*size;
+        g.beginPath();g.moveTo(x,y);g.lineTo(x+4,y+7);g.lineTo(x-2,y+12);g.stroke();
+      }
+    }
+  });
+}
+const paintedWalls=WALL_DESIGNS.map(design=>paintedWall(design));
 const themes=Object.fromEntries(Object.entries(ROOM_STYLES).map(([id,[floorColor,wallColor,prop]])=>{
   const base=surface(64,64,rect=>{
     rect('#242328',0,0,64,64);
@@ -668,16 +762,9 @@ const themes=Object.fromEntries(Object.entries(ROOM_STYLES).map(([id,[floorColor
     if(id==='flooded') for(const row of [9,29,49]) rect('#8ad5de52',5,row,53,2);
     if(id==='throne'||id==='chapel') rect(id==='throne'?'#a94e5355':'#d6b77a33',7,7,50,50);
   });
-  const wall=surface(64,64,rect=>{
-    rect('#312d2d',0,0,64,64);
-    for(let y=0;y<64;y+=16) for(let x=-16;x<64;x+=24){
-      const left=x+(y%32?12:0);
-      rect(wallColor,left+1,y+1,23,14);
-      rect('#fff3',left+1,y+1,22,1);
-      rect('#0003',left+1,y+13,22,2);
-    }
-  });
-  return [id,{id,floorColor,wallColor,prop,wall,floor:base.getContext('2d').getImageData(0,0,64,64).data}];
+  const wallIndex=(WALL_BY_ROOM[id] ?? 1)-1;
+  return [id,{id,floorColor,wallColor,prop,wall:paintedWalls[wallIndex],design:WALL_DESIGNS[wallIndex],
+    floor:base.getContext('2d').getImageData(0,0,64,64).data}];
 }));
 const walls = {
   '#':stone(89,'#453a35'),
@@ -895,14 +982,15 @@ function renderFirstPerson(flicker) {
     const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
     depth[x] = d;
     const cell=tile(hit.x,hit.y), door=!column && cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
+    const face=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02));
     if(column) paintPillar(x,top,h,column);
     else {
-      const wall=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02)).wall;
-      ctx.drawImage(door ? walls[door.status==='locked'?'G':'D'] : wall,Math.floor(hit.u*64),0,1,64,x,top,1,h);
+      const texture=door ? walls[door.status==='locked'?'G':'D'] : face.wall;
+      ctx.drawImage(texture,Math.floor(hit.u*texture.width),0,1,texture.height,x,top,1,h);
     }
     if(door){
       const lateral=door.axis==='x' ? player.y+(fy+ry*camera)*d-door.y : player.x+(fx+rx*camera)*d-door.x;
-      paintArch(x,d,lateral);
+      paintArch(x,d,lateral,face);
     }
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     let torchLight=0;
@@ -916,7 +1004,9 @@ function renderFirstPerson(flicker) {
     ctx.fillRect(x,top,1,h);
     openings[x]=openings[x].filter(opening=>opening.distance<d);
     for(const opening of openings[x].reverse()){
-      opening.band=paintArch(x,opening.distance,opening.lateral,opening.arch.status==='open');
+      const entry=Math.max(0,opening.distance-.02);
+      const theme=themeAt(player.x+dx*entry,player.y+dy*entry);
+      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open');
     }
   }
 
@@ -951,17 +1041,27 @@ function renderFirstPerson(flicker) {
   ctx.fillRect(width/2-2,horizon,5,1);
   ctx.fillRect(width/2,horizon-2,1,5);
 }
-function paintArch(column,distance,lateral,openLeaf=false){
+function paintArch(column,distance,lateral,theme,openLeaf=false){
   const scale=focal/Math.max(.01,distance);
   const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
-  const crown=.76+.42*Math.sqrt(1-u*u);
+  const {arch,base,accent}=theme.design;
+  const crown=.76+.42*(arch==='pointed' ? 1-u : Math.sqrt(1-u*u));
   const top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
   const lip=horizon-(crown-EYE_HEIGHT)*scale;
-  const trim=Math.min(lip-top,.075*scale);
-  ctx.fillStyle='#4e4036';
-  ctx.fillRect(column,top,1,lip-top);
-  ctx.fillStyle=Math.floor((lateral+ARCH_WIDTH/2)*3)%2 ? '#968574' : '#a99780';
+  const trim=Math.min(lip-top,(arch==='timber'?.09:.075)*scale);
+  const sample=Math.max(0,Math.min(theme.wall.width-1,Math.floor((lateral/ARCH_WIDTH+.5)*theme.wall.width)));
+  const cut=(lip-top)/(CEILING_HEIGHT*scale)*theme.wall.height;
+  if(cut>0) ctx.drawImage(theme.wall,sample,0,1,cut,column,top,1,lip-top);
+  const joint=Math.floor((lateral/ARCH_WIDTH+.5)*15)%2;
+  const tone=joint ? 15 : 35;
+  const metal=arch==='ironArch', timber=arch==='timber';
+  ctx.fillStyle=metal ? (joint?'#58616d':'#838791') : timber ? (joint?'#644939':'#976b48') :
+    `rgb(${base.map(value=>Math.min(255,value+tone)).join(',')})`;
   ctx.fillRect(column,lip-trim,1,trim);
+  if(arch==='fluted'||accent==='goldLine'||accent==='runes'){
+    ctx.fillStyle=accent==='runes'?'#b388db':accent==='goldLine'?'#e1c783':'#eee6d8';
+    ctx.fillRect(column,lip-trim*.38,1,trim*.24);
+  }
   if(openLeaf && lateral<-ARCH_WIDTH/2+.13){
     ctx.fillStyle='#67482f';
     ctx.fillRect(column,lip,1,horizon+EYE_HEIGHT*scale-lip);
