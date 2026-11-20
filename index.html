@@ -253,8 +253,9 @@ function rival(id,p,name,arms){
 
 
 // Both views share the projected room grid and encounter state.
-const ROOM_SIZE=30, ROOM_SPACING=39, HALF_ROOM=ROOM_SIZE/2;
+const ROOM_SIZE=30, ROOM_SPACING=31, HALF_ROOM=ROOM_SIZE/2;
 const ARCH_WIDTH=5, ARCH_HALF=Math.floor(ARCH_WIDTH/2);
+const ROOM_CENTER=HALF_ROOM+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
 let room,rooms,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
@@ -292,34 +293,38 @@ function restart() {
   actors=[];
   const bossKey=layout.bossKey ?? roomKey(layout.tiles.find(t=>t.type===0));
   const entrance=layout.tiles.find(t=>t.type===17);
-  const center=t=>({x:(t.x-originX)*ROOM_SPACING+19.5,y:(t.y-originY)*ROOM_SPACING+19.5});
+  const center=t=>({x:(t.x-originX)*ROOM_SPACING+ROOM_CENTER+.5,y:(t.y-originY)*ROOM_SPACING+ROOM_CENTER+.5});
   const boss=grid.get(bossKey);
   const production={0:['gold','stone'],2:['food'],3:['stone'],5:['rp'],10:['gold'],18:['gold'],19:['rp']};
   const producers={gold:0,stone:0,food:0,rp:0};
   for(const tile of layout.tiles) for(const kind of production[tile.type] ?? []) producers[kind]++;
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
-    const roomName=DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0];
-    for(let dy=-HALF_ROOM;dy<HALF_ROOM;dy++) for(let dx=-HALF_ROOM;dx<HALF_ROOM;dx++) {
-      room[cy+dy][cx+dx]='.';
-    }
+    const hall=t.type>=12 && t.type<=15;
+    const roomName=hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
     rooms.set(roomKey({x:cx,y:cy}),roomName);
+    const n=hall ? ARCH_HALF : HALF_ROOM;
+    const end=hall ? ARCH_HALF+1 : HALF_ROOM;
+    for(let dy=-n;dy<end;dy++) for(let dx=-n;dx<end;dx++) room[cy+dy][cx+dx]='.';
     for(const [d,[dx,dy]] of DIRS.entries()){
       const neighbor=grid.get(roomKey({x:t.x+dx,y:t.y+dy}));
       if(!neighbor || !compatible(t,neighbor,d)) continue;
       const boundary=dx+dy>0 ? HALF_ROOM : HALF_ROOM+1;
-      const last=Math.floor(ROOM_SPACING/2);
-      const archX=cx+dx*boundary, archY=cy+dy*boundary;
-      const vault=t===boss && !!layout.keyRoom;
-      const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size%4];
-      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
-      for(let step=boundary;step<=last;step++) {
-        for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
-          const col=cx+dx*step+Math.abs(dy)*lane;
-          const rowIndex=cy+dy*step+Math.abs(dx)*lane;
-          room[rowIndex][col]=step===boundary ? 'A' : '=';
-          if(step===boundary) doors.set(cellKey(col,rowIndex),arch);
+      if(hall){
+        for(let step=ARCH_HALF+1;step<boundary;step++) for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
+          room[cy+dy*step+Math.abs(dx)*lane][cx+dx*step+Math.abs(dy)*lane]='.';
         }
+      }
+      const archX=cx+dx*boundary, archY=cy+dy*boundary;
+      if(doors.has(cellKey(archX,archY))) continue;
+      const vault=(t===boss || neighbor===boss) && !!layout.keyRoom;
+      const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size/ARCH_WIDTH%4];
+      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
+      for(let lane=-ARCH_HALF;lane<=ARCH_HALF;lane++){
+        const col=archX+Math.abs(dy)*lane;
+        const rowIndex=archY+Math.abs(dx)*lane;
+        room[rowIndex][col]='A';
+        doors.set(cellKey(col,rowIndex),arch);
       }
       actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*1.95,y:arch.y-dy*1.5+Math.abs(dx)*1.95,lift:.38,height:.52});
     }
@@ -334,7 +339,7 @@ function restart() {
     const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
       Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*(defender?.2:.1))])) : null;
     const chest=layout.chests?.[key];
-    if(chest || loot) actors.push({kind:'chest',x:x+14,y:y+14,height:.38,radius:.31,roomKey:key,chest,loot});
+    if(chest || loot) actors.push({kind:'chest',x:x+(hall?2.2:14),y:y+(hall?2.2:14),height:.38,radius:.31,roomKey:key,chest,loot});
     if(layout.keyRoom===key) actors.push({kind:'key',x:x-.92,y:y+.76,height:.25});
     if(t.dungeonTrap || (!site && t.type===16 && t.y===entrance.y-2)){
       actors.push({kind:'trap',name:t.dungeonTrap ?? 'spikes',x,y,height:.06});
@@ -349,7 +354,7 @@ function restart() {
   // Mark a single layer of masonry around walkable space. The rest is map void.
   for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++) {
     if(room[y][x]!=='#') continue;
-    if(DIRS.some(([dx,dy])=>['.','=','A'].includes(room[y+dy][x+dx]))) room[y][x]='W';
+    if(DIRS.some(([dx,dy])=>['.','A'].includes(room[y+dy][x+dx]))) room[y][x]='W';
   }
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
@@ -831,7 +836,7 @@ function renderMap(mini=false) {
         if(cell==='#') return;
         const door=cell==='A' ? doors.get(cellKey(x,y)) : null;
         const color=door ? ({bare:'#d5bc97',open:'#ba9865',closed:'#a96838',locked:'#d45545'})[door.status] :
-          ({'.':'#6c5747','=':'#a58e70',W:'#8b8378'})[cell];
+          ({'.':'#6c5747',W:'#8b8378'})[cell];
         rect(color,left+x*size,top+y*size,Math.ceil(size),Math.ceil(size));
       }));
     });
@@ -940,7 +945,7 @@ function frame(now) {
   }
   lastRender = viewState;
   const roomName=tile(Math.floor(player.x),Math.floor(player.y))==='.' ?
-    rooms.get(roomKey({x:Math.floor(player.x/ROOM_SPACING)*ROOM_SPACING+19,y:Math.floor(player.y/ROOM_SPACING)*ROOM_SPACING+19})) : 'Hallway';
+    rooms.get(roomKey({x:Math.floor(player.x/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER,y:Math.floor(player.y/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER})) : 'Archway';
   const foe=targetActor(['enemy','boss']);
   byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}${foe && !defeated && !escaped ? ` · ${foe.name} ${foe.hp}/${foe.maxHp} HP` : ''}`;
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
