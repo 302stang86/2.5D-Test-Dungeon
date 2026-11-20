@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.5D Test Dungeon</title>
+<style>
+:root { color-scheme: dark; font: 16px system-ui,sans-serif; background:#171613; color:#f4e6c9; }
+* { box-sizing:border-box; }
+body { margin:0; background:radial-gradient(ellipse at top,#30271e,transparent 70%); min-height:100vh; }
+main { width:min(940px,100%); margin:auto; padding:clamp(12px,3vw,30px); }
+header, .toolbar, .readout, .controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; justify-content:space-between; }
+h1 { font:bold clamp(24px,5vw,42px) Georgia,serif; margin:0; }
+p { margin:8px 0; }
+button { font:inherit; color:inherit; border:1px solid #78664c; border-radius:6px; background:#302922; padding:8px 12px; min-height:44px; cursor:pointer; touch-action:manipulation; }
+button[aria-pressed=true], button:active { color:#1b1510; background:#e6b769; }
+button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+.stage { position:relative; margin:12px 0 0; overflow:hidden; border:1px solid #78664c; border-radius:8px; background:#100e0c; }
+canvas { display:block; width:100%; aspect-ratio:16/10; image-rendering:pixelated; touch-action:none; }
+.readout { color:#d3c4af; font-size:.9rem; }
+#message { min-height:2.7em; }
+.controls { justify-content:flex-start; }
+.controls button { min-width:48px; touch-action:none; }
+.hint { font-size:.9rem; color:#d3c4af; }
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>2.5D Test Dungeon</h1>
+<div class="toolbar" role="group" aria-label="View">
+<button id="map" aria-pressed="false">Top-down</button>
+<button id="eye" aria-pressed="true">First-person</button>
+</div>
+</header>
+<p>Find the key in the chest, then unlock the iron gate and step through.</p>
+<div class="stage"><canvas id="view" width="480" height="300" aria-label="Dungeon game view"></canvas></div>
+<div class="readout"><p id="position"></p><p id="inventory"></p></div>
+<p id="message" role="status"></p>
+<div class="controls" aria-label="Game controls">
+<button data-hold="q" aria-label="Turn left">↶</button>
+<button data-hold="w" aria-label="Move forward">↑</button>
+<button data-hold="s" aria-label="Move backward">↓</button>
+<button data-hold="e" aria-label="Turn right">↷</button>
+<button id="interact">Interact</button>
+<button id="reset">Restart</button>
+</div>
+<p class="hint">WASD to move, Q/E or ←/→ to turn, Space to interact, V to switch views. Drag the first-person view to look around.</p>
+</main>
+<script>
+'use strict';
+
+// Both renderers, collision, and interaction read these same coordinates.
+const room = [
+  '############',
+  '#..........#',
+  '#.BB.......#',
+  '#..........#',
+  '#......##..#',
+  '#.......D..#',
+  '#......##..#',
+  '#..........#',
+  '#..........#',
+  '########G###',
+  '########.###',
+  '############'
+];
+const actors = [
+  { kind:'torch', x:3.5, y:4.2, lift:0.38, height:0.52 },
+  { kind:'torch', x:7.2, y:8.5, lift:0.38, height:0.52 },
+  { kind:'pillar', x:5.5, y:5.5, height:1, radius:0.26 },
+  { kind:'table', x:4.5, y:3.5, height:0.48, radius:0.32 },
+  { kind:'guard', x:2.5, y:6.5, height:0.86, radius:0.19 },
+  { kind:'chest', x:9.5, y:2.5, height:0.38, radius:0.22 }
+];
+const canvas = document.querySelector('#view');
+const ctx = canvas.getContext('2d');
+const width = canvas.width, height = canvas.height, horizon = height / 2;
+const focal = width / (2 * Math.tan(Math.PI / 5));
+const depth = new Float32Array(width);
+const planes = ctx.createImageData(width, height);
+const buttons = [...document.querySelectorAll('[data-hold]')];
+const keys = new Set();
+const held = new Map();
+const player = {};
+let mode = 'eye', hasKey, doorOpen, gateOpen, escaped, drag;
+const byId = id => document.getElementById(id);
+const tell = message => { byId('message').textContent = message; };
+function restart() {
+  Object.assign(player, { x:4.5, y:7.5, angle:-0.62 });
+  hasKey = doorOpen = gateOpen = escaped = false;
+  tell('The keeper may know where to look.');
+}
+function tile(x,y) {
+  return room[y]?.[x] ?? '#';
+}
+function solid(x,y) {
+  const cell = tile(x,y);
+  return cell === '#' || cell === 'B' || (cell === 'D' && !doorOpen) || (cell === 'G' && !gateOpen);
+}
+function canStand(x,y) {
+  const r = 0.17;
+  for (let row = Math.floor(y-r); row <= Math.floor(y+r); row++) {
+    for (let col = Math.floor(x-r); col <= Math.floor(x+r); col++) {
+      if (solid(col,row)) return false;
+    }
+  }
+  return !actors.some(a => a.radius && Math.hypot(a.x-x,a.y-y) < a.radius+r);
+}
+
+// Grid traversal returns perpendicular depth when given a camera-plane ray.
+function cast(dx,dy) {
+  let x = Math.floor(player.x), y = Math.floor(player.y);
+  const stepX = dx < 0 ? -1 : 1, stepY = dy < 0 ? -1 : 1;
+  const deltaX = dx === 0 ? Infinity : Math.abs(1/dx);
+  const deltaY = dy === 0 ? Infinity : Math.abs(1/dy);
+  let nextX = dx === 0 ? Infinity : (dx < 0 ? player.x-x : x+1-player.x)*deltaX;
+  let nextY = dy === 0 ? Infinity : (dy < 0 ? player.y-y : y+1-player.y)*deltaY;
+  let distance, side;
+  do {
+    side = nextX < nextY ? 'x' : 'y';
+    if (side === 'x') { distance = nextX; nextX += deltaX; x += stepX; }
+    else { distance = nextY; nextY += deltaY; y += stepY; }
+  } while (!solid(x,y));
+  const crossing = side === 'x' ? player.y+dy*distance : player.x+dx*distance;
+  return { x, y, distance, u: crossing-Math.floor(crossing), side };
+}
+function surface(w,h,paint) {
+  const image = document.createElement('canvas');
+  image.width = w;
+  image.height = h;
+  const g = image.getContext('2d');
+  const rect = (color,x,y,width,height) => { g.fillStyle = color; g.fillRect(x,y,width,height); };
+  paint(rect,g);
+  return image;
+}
+function stone(base, mortar) {
+  return surface(64,64,(rect) => {
+    rect(mortar,0,0,64,64);
+    for (let row=0; row<4; row++) {
+      for (let col=-1; col<4; col++) {
+        const x=col*22+(row%2)*11, y=row*16;
+        const shade=base+((row*19+(col+1)*13)%15);
+        rect(`rgb(${shade+9},${shade+2},${shade-5})`,x+1,y+1,21,14);
+        rect(`rgba(255,220,175,.17)`,x+1,y+1,21,1);
+      }
+    }
+    for (let i=0; i<280; i++) rect(i%2?'#0002':'#fff2',(i*37)%64,(i*57+Math.floor(i/8)*5)%64,1+i%2,1);
+  });
+}
+const floor = stone(60,'#282220').getContext('2d').getImageData(0,0,64,64).data;
+const walls = {
+  '#':stone(89,'#453a35'),
+  D:surface(64,64,rect => {
+    rect('#382519',0,0,64,64);
+    for (let x=2; x<64; x+=12) {
+      rect('#795133',x,0,10,64);
+      rect('#9c6942',x,0,2,64);
+    }
+    for (const y of [9,47]) {
+      rect('#373536',0,y,64,6);
+      for (let x=5; x<64; x+=12) rect('#9b9490',x,y+2,2,2);
+    }
+    rect('#e8b36a',49,33,5,4);
+  }),
+  G:surface(64,64,rect => {
+    rect('#242529',0,0,64,64);
+    for (let x=2; x<64; x+=9) {
+      rect('#60626a',x,0,5,64);
+      rect('#a0a1a2',x,0,1,64);
+    }
+    rect('#777982',0,15,64,4);
+    rect('#777982',0,47,64,4);
+    rect('#c99c62',28,30,8,10);
+  }),
+  B:surface(64,64,rect => {
+    rect('#33241d',0,0,64,64);
+    const bindings=['#905048','#776a47','#49645f','#956849'];
+    for (let row=0; row<3; row++) {
+      for (let x=4; x<59; x+=5) {
+        const h=9+(x+row)%6;
+        rect(bindings[(x+row)%4],x,row*21+16-h,4,h);
+        rect('#d1ab69',x,row*21+14,4,1);
+      }
+      rect('#885c3a',0,row*21+16,64,4);
+    }
+  })
+};
+const sprites = {
+  chest:surface(24,16,rect => {
+    rect('#402619',1,4,22,12); rect('#ae6635',2,2,20,6);
+    rect('#77442b',2,9,20,6); rect('#daa553',4,2,2,13);
+    rect('#daa553',18,2,2,13); rect('#f1cd7e',10,7,4,4);
+  }),
+  opened:surface(24,16,rect => {
+    rect('#a96236',1,0,22,5); rect('#462819',1,6,22,10);
+    rect('#bc8050',1,6,22,2); rect('#daa553',4,8,2,7);
+    rect('#daa553',18,8,2,7);
+  }),
+  guard:surface(20,34,rect => {
+    rect('#242935',4,24,5,10); rect('#242935',11,24,5,10);
+    rect('#66382e',3,11,14,15); rect('#85918d',3,12,3,5);
+    rect('#85918d',14,12,3,5); rect('#c49b70',7,5,7,6);
+    rect('#777d82',6,1,9,5); rect('#353631',4,22,12,3);
+    rect('#e1b672',9,22,3,3); rect('#b1a786',1,15,2,17);
+  }),
+  pillar:surface(20,40,(rect,g) => {
+    const gradient=g.createLinearGradient(3,0,17,0);
+    gradient.addColorStop(0,'#484044'); gradient.addColorStop(.45,'#a3998f'); gradient.addColorStop(1,'#4d4445');
+    rect(gradient,3,1,14,38);
+    for (const y of [10,21,32]) rect('#4a4143',3,y,14,1);
+    rect('#776b66',1,0,18,4); rect('#6d625e',0,36,20,4);
+  }),
+  table:surface(26,16,rect => {
+    rect('#704529',3,5,3,11); rect('#704529',20,5,3,11);
+    rect('#9d673d',0,3,26,5); rect('#c08a57',2,2,22,2);
+  }),
+  torch:surface(14,26,rect => {
+    rect('#593a24',6,13,3,13); rect('#a86a35',5,12,5,4);
+    rect('#d65720',3,5,9,8); rect('#ff942e',5,2,5,10);
+    rect('#ffe298',6,6,3,7);
+  })
+};
+function renderPlanes(fx,fy,rx,ry) {
+  const data = planes.data;
+  for (let y=0; y<height; y++) {
+    const isFloor = y >= horizon;
+    const distance = 0.5*focal/Math.abs(y+0.5-horizon);
+    const step = distance/focal;
+    let worldX = player.x+distance*fx+(0.5-width/2)*step*rx;
+    let worldY = player.y+distance*fy+(0.5-width/2)*step*ry;
+    const light = Math.max(.17, 1/(1+distance*.27))*(isFloor?1:.65);
+    for (let x=0; x<width; x++) {
+      const sample = (((Math.floor(worldY*64)&63)*64)+(Math.floor(worldX*64)&63))*4;
+      const index = (y*width+x)*4;
+      const checker = (Math.floor(worldX)+Math.floor(worldY))&1 ? .85 : 1;
+      data[index] = floor[sample]*light*checker;
+      data[index+1] = floor[sample+1]*light*checker;
+      data[index+2] = floor[sample+2]*light*checker;
+      data[index+3] = 255;
+      worldX += step*rx;
+      worldY += step*ry;
+    }
+  }
+  ctx.putImageData(planes,0,0);
+}
+function renderFirstPerson() {
+  const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
+  renderPlanes(fx,fy,rx,ry);
+  for (let x=0; x<width; x++) {
+    const camera = (x+0.5-width/2)/focal;
+    const hit = cast(fx+rx*camera,fy+ry*camera);
+    const d = Math.max(0.01,hit.distance), h = focal/d, top = horizon-h/2;
+    depth[x] = d;
+    ctx.drawImage(walls[tile(hit.x,hit.y)],Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
+    ctx.fillStyle = `rgba(13,10,11,${1-light})`;
+    ctx.fillRect(x,top,1,h);
+  }
+
+  const visible = actors.map(a => {
+    const dx=a.x-player.x, dy=a.y-player.y;
+    return { a, d:dx*fx+dy*fy, lateral:dx*rx+dy*ry };
+  }).filter(s => s.d > .08).sort((a,b) => b.d-a.d);
+  for (const {a,d,lateral} of visible) {
+    const sprite = sprites[a.kind === 'chest' && hasKey ? 'opened' : a.kind];
+    const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
+    const start = width/2+lateral*scale-w/2;
+    const top = horizon+(0.5-(a.lift ?? 0))*scale-h;
+    ctx.globalAlpha = Math.max(.6,1-d*.032);
+    for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
+      if (depth[x]>d) ctx.drawImage(sprite,Math.floor((x-start)/w*sprite.width),0,1,sprite.height,x,top,1,h);
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle='#f4e6c9';
+  ctx.fillRect(width/2-2,horizon,5,1);
+  ctx.fillRect(width/2,horizon-2,1,5);
+}
+function renderMap() {
+  const size=23, left=(width-12*size)/2, top=(height-12*size)/2;
+  ctx.fillStyle='#15120f';
+  ctx.fillRect(0,0,width,height);
+  room.forEach((row,y) => [...row].forEach((cell,x) => {
+    const px=left+x*size, py=top+y*size;
+    ctx.fillStyle=(x+y)%2 ? '#6c5747' : '#5b473a';
+    ctx.fillRect(px,py,size-1,size-1);
+    if (solid(x,y)) ctx.drawImage(walls[cell],px,py,size-1,size-1);
+    if ((cell === 'D' || cell === 'G') && !solid(x,y)) {
+      ctx.fillStyle='#d2a574';
+      ctx.fillRect(px,py,size-1,2);
+    }
+  }));
+  for (const a of actors) {
+    const sprite=sprites[a.kind === 'chest' && hasKey ? 'opened' : a.kind];
+    const h=size*.74, w=Math.min(size*.9,h*sprite.width/sprite.height);
+    ctx.drawImage(sprite,left+a.x*size-w/2,top+a.y*size-h/2,w,h);
+  }
+  ctx.save();
+  ctx.translate(left+player.x*size,top+player.y*size);
+  ctx.rotate(player.angle);
+  ctx.fillStyle='#ffda85';
+  ctx.strokeStyle='#302214';
+  ctx.beginPath();
+  ctx.moveTo(9,0); ctx.lineTo(-6,-6); ctx.lineTo(-4,0); ctx.lineTo(-6,6);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function interact() {
+  if (escaped) return;
+  const candidates = [...actors.filter(a => a.kind === 'chest' || a.kind === 'guard'),
+    {kind:'door', x:8.5, y:5.5}, {kind:'gate', x:8.5, y:9.5}];
+  for (const item of candidates) item.distance = Math.hypot(item.x-player.x,item.y-player.y);
+  const target = candidates.sort((a,b) => a.distance-b.distance).find(item => {
+    if (item.distance > 1.25) return false;
+    const dx = item.x-player.x, dy = item.y-player.y;
+    if (item.distance < .001) return true;
+    if (mode === 'eye' && (Math.cos(player.angle)*dx+Math.sin(player.angle)*dy)/item.distance < .58) return false;
+    const hit = cast(dx,dy);
+    return hit.distance >= 1 || (hit.x === Math.floor(item.x) && hit.y === Math.floor(item.y));
+  });
+  switch (target?.kind) {
+    case 'chest':
+      tell(hasKey ? 'The chest is empty.' : 'You found the iron key.');
+      hasKey=true;
+      break;
+    case 'guard': tell('Keeper: The key is in the chest to the northeast. The exit is through the iron gate to the south.'); break;
+    case 'door':
+      if (!doorOpen) { doorOpen=true; tell('You opened the wooden door.'); }
+      else tell('The wooden door is already open.');
+      break;
+    case 'gate':
+      if (!hasKey) { tell('The iron gate is locked.'); break; }
+      gateOpen=true;
+      tell('The iron gate is open. Step through to escape.');
+      break;
+    default: tell(mode === 'eye' ? 'Move closer and face the object you want to use.' : 'Move closer to the object you want to use.');
+  }
+}
+function setMode(next) {
+  drag = undefined;
+  mode = next;
+  for (const id of ['map','eye']) byId(id).setAttribute('aria-pressed',String(id===mode));
+}
+const moveKeys = new Set(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright']);
+addEventListener('keydown',event => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button') && event.key===' ') return;
+  const key = event.key.toLowerCase();
+  if (moveKeys.has(key)) { keys.add(key); event.preventDefault(); }
+  if (!event.repeat && key === ' ') { event.preventDefault(); interact(); }
+  if (!event.repeat && key === 'v') setMode(mode === 'eye' ? 'map' : 'eye');
+});
+addEventListener('keyup',event => keys.delete(event.key.toLowerCase()));
+addEventListener('blur',() => { keys.clear(); held.clear(); drag=undefined; });
+for (const button of buttons) {
+  button.addEventListener('pointerdown',event => {
+    button.setPointerCapture(event.pointerId);
+    held.set(event.pointerId,button.dataset.hold);
+  });
+  for (const type of ['pointerup','pointercancel','lostpointercapture']) {
+    button.addEventListener(type,event => held.delete(event.pointerId));
+  }
+}
+canvas.addEventListener('pointerdown',event => {
+  if (mode !== 'eye' || drag) return;
+  drag = { id:event.pointerId, x:event.clientX };
+  canvas.setPointerCapture(event.pointerId);
+});
+canvas.addEventListener('pointermove',event => {
+  if (drag?.id !== event.pointerId) return;
+  player.angle += (event.clientX-drag.x)*.008;
+  drag.x=event.clientX;
+});
+for (const type of ['pointerup','pointercancel','lostpointercapture']) {
+  canvas.addEventListener(type,event => { if (drag?.id === event.pointerId) drag=undefined; });
+}
+byId('map').onclick = () => setMode('map');
+byId('eye').onclick = () => setMode('eye');
+byId('interact').onclick = interact;
+byId('reset').onclick = restart;
+const down = key => keys.has(key) || [...held.values()].includes(key);
+let previous, lastRender;
+function frame(now) {
+  const dt = Math.min(.033,(now-(previous ?? now))/1000);
+  previous = now;
+  player.angle += (Number(down('e') || down('arrowright'))-Number(down('q') || down('arrowleft')))*dt*2.4;
+  const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'));
+  const strafe=Number(down('d'))-Number(down('a'));
+  const distance=2.6*dt/Math.max(1,Math.hypot(forward,strafe));
+  const fx=Math.cos(player.angle), fy=Math.sin(player.angle);
+  const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
+  if (canStand(player.x+dx,player.y)) player.x+=dx;
+  if (canStand(player.x,player.y+dy)) player.y+=dy;
+  if (gateOpen && player.y>=10 && Math.floor(player.x)===8 && !escaped) {
+    escaped=true;
+    tell('You escaped the dungeon. Switch views to compare the exit, or restart to run it again.');
+  }
+  const viewState = [mode,player.x,player.y,player.angle,hasKey,doorOpen,gateOpen,escaped].join('|');
+  if (viewState === lastRender) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  lastRender = viewState;
+  byId('position').textContent = `Tile (${Math.floor(player.x)}, ${Math.floor(player.y)}) · Position (${player.x.toFixed(2)}, ${player.y.toFixed(2)})`;
+  byId('inventory').textContent = escaped ? 'Escaped' : hasKey ? 'Inventory: Iron key' : 'Inventory: Empty';
+  if (mode === 'eye') renderFirstPerson();
+  else renderMap();
+  requestAnimationFrame(frame);
+}
+ctx.imageSmoothingEnabled=false;
+restart();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
