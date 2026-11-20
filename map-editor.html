@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon Map Editor</title>
+<style>
+:root { color-scheme:dark; font:16px system-ui,sans-serif; color:#f6e8d1; background:#171411; }
+* { box-sizing:border-box; }
+body { margin:0; background:radial-gradient(ellipse at top,#38291d,transparent 52%); min-height:100vh; }
+main { width:min(1040px,100%); padding:clamp(14px,3vw,32px); margin:auto; }
+header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+h1 { font:bold clamp(28px,5vw,42px) Georgia,serif; margin:0; }
+a { color:#ebbc7d; }
+button { font:inherit; min-height:44px; padding:8px 12px; color:inherit; background:#30261e; border:1px solid #896f53; border-radius:6px; cursor:pointer; touch-action:manipulation; }
+button:disabled { opacity:.45; cursor:default; }
+button[aria-pressed=true] { background:#ebbb7c; color:#251a10; border-color:#ebbb7c; }
+button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-offset:2px; }
+.workspace { display:grid; grid-template-columns:205px minmax(0,1fr); align-items:start; gap:14px; }
+.tools,.map { background:#211b17; border:1px solid #67523f; border-radius:10px; padding:14px; }
+.palette,.toolbar { display:flex; gap:6px; flex-wrap:wrap; }
+.palette { display:grid; }
+.palette button { text-align:left; }
+.tools h2 { font-size:1rem; margin:0 0 8px; }
+.toolbar { margin-bottom:12px; }
+#status { min-height:2.75em; margin:10px 0 0; color:#e0c8a9; }
+.board { overflow:auto; padding:4px; }
+#grid { display:grid; grid-template-columns:repeat(14,minmax(36px,1fr)); width:max(100%, 530px); gap:2px; }
+.cell { position:relative; aspect-ratio:1; min-height:0; padding:0; border-radius:3px; border-color:#4d4035; background:#191613; color:#fff6e6; font-size:clamp(10px,2vw,14px); font-weight:bold; }
+.cell:hover { border-color:#f6d5a1; }
+.cell:focus-visible { z-index:1; outline-offset:0; }
+.cell[data-room=entrance] { background:#3a5946; }
+.cell[data-room=chamber] { background:#674d37; }
+.cell[data-room=hall] { background:#414d59; }
+.cell[data-room=storage] { background:#654842; }
+.cell[data-room=vault] { background:#634b70; }
+.cell[data-chest=true] { box-shadow:inset 0 0 0 2px #f0b54f; color:#ffe2a0; }
+.cell[data-east=true]::after,.cell[data-south=true]::before { content:""; position:absolute; background:#c9a271; z-index:1; pointer-events:none; }
+.cell[data-east=true]::after { top:42%; right:-4px; width:6px; height:16%; }
+.cell[data-south=true]::before { left:42%; bottom:-4px; height:6px; width:16%; }
+@media(max-width:680px) {
+ .workspace { grid-template-columns:1fr; }
+ .palette { display:flex; }
+ .tools,.map { padding:10px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Dungeon Map Editor</h1><a href="./">Play 2.5D Test Dungeon</a></header>
+  <div class="workspace">
+    <section class="tools" aria-labelledby="tools-title">
+      <h2 id="tools-title">Place on grid</h2>
+      <div class="palette" role="group" aria-label="Placement tools">
+        <button data-tool="entrance" aria-pressed="false">Entrance</button>
+        <button data-tool="chamber" aria-pressed="true">Chamber</button>
+        <button data-tool="hall" aria-pressed="false">Hallway</button>
+        <button data-tool="storage" aria-pressed="false">Storage</button>
+        <button data-tool="vault" aria-pressed="false">Vault</button>
+        <button data-tool="chest" aria-pressed="false">Chest</button>
+        <button data-tool="erase" aria-pressed="false">Erase room</button>
+      </div>
+      <p id="status" role="status">Select a room type, then click or tap a square.</p>
+    </section>
+    <section class="map" aria-label="Map">
+      <div class="toolbar" role="group" aria-label="Layout actions">
+        <button id="undo" disabled>Undo</button>
+        <button id="export">Save JSON</button>
+        <button id="import">Open JSON</button>
+        <button id="clear" disabled>Clear map</button>
+        <input id="file" type="file" accept=".json,application/json" hidden>
+      </div>
+      <div class="board" tabindex="0" aria-label="Scrollable map board">
+        <div id="grid" role="group" aria-label="Dungeon map squares"></div>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+'use strict';
+const size = 14;
+const rooms = {
+  entrance: { label:'Entrance', mark:'E' }, chamber: { label:'Chamber', mark:'C' },
+  hall: { label:'Hallway', mark:'H' }, storage: { label:'Storage', mark:'S' },
+  vault: { label:'Vault', mark:'V' }
+};
+const grid = document.querySelector('#grid');
+const status = document.querySelector('#status');
+const undo = document.querySelector('#undo');
+const clear = document.querySelector('#clear');
+const file = document.querySelector('#file');
+const tools = [...document.querySelectorAll('[data-tool]')];
+const storageKey = 'dungeon-map-editor-v1';
+let layout = new Map();
+const history = [];
+let tool = 'chamber';
+let focusedCell = 0;
+const key = (x,y) => y * size + x;
+const setStatus = message => { status.textContent = message; };
+
+function decode(data) {
+  if (data?.version !== 1 || data.width !== size || data.height !== size ||
+      !Array.isArray(data.rooms) || data.rooms.length > size * size) {
+    throw new Error('Choose a 14 × 14 layout saved from this editor.');
+  }
+  const cells = new Map();
+  for (const room of data.rooms) {
+    if (!room || !Number.isInteger(room.x) || !Number.isInteger(room.y) ||
+        room.x < 0 || room.y < 0 || room.x >= size || room.y >= size ||
+        !Object.hasOwn(rooms, room.type) || typeof room.chest !== 'boolean' ||
+        cells.has(key(room.x, room.y))) {
+      throw new Error('The file contains an invalid or duplicate room.');
+    }
+    cells.set(key(room.x,room.y), room);
+  }
+  return cells;
+}
+function encode() {
+  return { version:1, width:size, height:size, rooms:[...layout.values()] };
+}
+try {
+  const saved = localStorage.getItem(storageKey);
+  if (saved) layout = decode(JSON.parse(saved));
+} catch {
+  setStatus('The browser draft could not be restored. You can still open a saved JSON layout.');
+}
+
+const cells = Array.from({ length:size * size }, (_, index) => {
+  const button = document.createElement('button');
+  button.className = 'cell';
+  button.type = 'button';
+  button.dataset.index = index;
+  button.tabIndex = index === 0 ? 0 : -1;
+  grid.append(button);
+  return button;
+});
+
+function render() {
+  let chests = 0;
+  cells.forEach((button, index) => {
+    const x = index % size, y = Math.floor(index / size);
+    const room = layout.get(index), type = room && rooms[room.type];
+    if (room?.chest) chests++;
+    button.dataset.room = room?.type ?? '';
+    button.dataset.chest = Boolean(room?.chest);
+    button.dataset.east = Boolean(room && x < size - 1 && layout.has(index + 1));
+    button.dataset.south = Boolean(room && layout.has(index + size));
+    button.textContent = room?.chest ? type.mark + ' ◆' : type?.mark ?? '';
+    const name = 'Column ' + (x + 1) + ', row ' + (y + 1) + ' · ' + (type?.label ?? 'Empty') +
+      (room?.chest ? ' with chest' : '');
+    button.setAttribute('aria-label', name);
+    button.title = name;
+  });
+  undo.disabled = history.length === 0;
+  clear.disabled = layout.size === 0;
+  grid.setAttribute('aria-label', 'Dungeon map · ' + layout.size + ' rooms · ' + chests + ' chests');
+}
+function persist() {
+  render();
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(encode()));
+  } catch {
+    setStatus('Browser storage is unavailable. Use Save JSON to keep this layout.');
+  }
+}
+function remember() {
+  history.push(new Map(layout));
+  if (history.length > 50) history.shift();
+}
+function place(index) {
+  const existing = layout.get(index);
+  if (tool === 'chest' && !existing) {
+    setStatus('Place a room before adding a chest.');
+    return;
+  }
+  if (tool === 'erase' && !existing || existing?.type === tool) return;
+  remember();
+  if (tool === 'erase') {
+    layout.delete(index);
+    setStatus('Room removed.');
+  } else if (tool === 'chest') {
+    layout.set(index, { ...existing, chest:!existing.chest });
+    setStatus(existing.chest ? 'Chest removed.' : 'Chest placed.');
+  } else {
+    layout.set(index, { x:index % size, y:Math.floor(index / size), type:tool, chest:existing?.chest ?? false });
+    setStatus(rooms[tool].label + ' placed.');
+  }
+  persist();
+}
+function focusCell(index) {
+  cells[focusedCell].tabIndex = -1;
+  focusedCell = index;
+  cells[index].tabIndex = 0;
+}
+grid.addEventListener('click', event => {
+  const button = event.target.closest('.cell');
+  if (!button) return;
+  const index = Number(button.dataset.index);
+  focusCell(index);
+  place(index);
+});
+grid.addEventListener('keydown', event => {
+  const button = event.target.closest('.cell');
+  if (!button) return;
+  const delta = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1] }[event.key];
+  if (!delta) return;
+  event.preventDefault();
+  const index = Number(button.dataset.index);
+  const x = index % size + delta[0], y = Math.floor(index / size) + delta[1];
+  if (x < 0 || y < 0 || x >= size || y >= size) return;
+  focusCell(key(x,y));
+  cells[focusedCell].focus();
+});
+for (const button of tools) {
+  button.addEventListener('click', () => {
+    tool = button.dataset.tool;
+    for (const other of tools) other.setAttribute('aria-pressed', String(other === button));
+    setStatus(tool === 'chest' ? 'Select a room to add or remove its chest.' :
+      tool === 'erase' ? 'Select a room to erase it and its chest.' : 'Select a square to place ' + rooms[tool].label.toLowerCase() + '.');
+  });
+}
+undo.onclick = () => {
+  if (!history.length) return;
+  layout = history.pop();
+  setStatus('Last change undone.');
+  persist();
+};
+clear.onclick = () => {
+  if (!layout.size) return;
+  remember();
+  layout = new Map();
+  setStatus('Map cleared. Undo restores it.');
+  persist();
+};
+document.querySelector('#export').onclick = () => {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(encode(), null, 2)], { type:'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dungeon-layout.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+document.querySelector('#import').onclick = () => file.click();
+file.onchange = async () => {
+  const selected = file.files[0];
+  file.value = '';
+  if (!selected) return;
+  try {
+    const imported = decode(JSON.parse(await selected.text()));
+    remember();
+    layout = imported;
+    setStatus('Layout opened. Undo restores the previous map.');
+    persist();
+  } catch (error) {
+    setStatus(error instanceof SyntaxError ? 'The selected file is not valid JSON.' : error.message);
+  }
+};
+render();
+</script>
+</body>
+</html>
