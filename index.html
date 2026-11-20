@@ -47,11 +47,11 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <button data-hold="s" aria-label="Move backward">↓</button>
 <button data-hold="e" aria-label="Turn right">↷</button>
 <button id="interact">Interact</button>
-<button id="punch">Punch</button>
+<button id="punch">Punch</button> <button id="weapon-toggle" disabled>Equip weapon</button> <button id="reload" disabled>Reload</button>
 <button id="heal">Heal</button><button id="buy">Buy lockpick</button>
 <button id="reset">New layout</button>
 </div>
-<p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space or left-click to punch, H to heal, V to switch views. Drag the first-person view to look around.</p>
+<p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space or left-click to use fists or weapon, G to equip or stow, R to reload, H to heal, V to switch views. Drag the first-person view to look around.</p>
 </main>
 <script>
 'use strict';
@@ -302,6 +302,86 @@ function decorateRoom(theme,x,y){
   }
 }
 
+const WEAPONS={
+  pistol:{name:'Pistol',capacity:12,reserve:36,interval:.27,kick:8,flash:5,length:47,color:'#505461'},
+  shotgun:{name:'Shotgun',capacity:6,reserve:18,interval:.7,kick:19,flash:9,length:111,color:'#554739'},
+  ar15:{name:'AR-15',capacity:30,reserve:60,interval:.18,kick:10,flash:7,length:105,color:'#555d63'},
+  ak47:{name:'AK-47',capacity:30,reserve:60,interval:.22,kick:13,flash:8,length:119,color:'#69503c'},
+  smg:{name:'SMG',capacity:25,reserve:75,interval:.14,kick:7,flash:6,length:77,color:'#434b50'}
+};
+let carriedWeapon=null, weaponEquipped=false, shotTime=0, reloadTime=0, shotImpact=null;
+const RELOAD_SECONDS=1.15;
+function activeWeapon(){ return weaponEquipped ? carriedWeapon : null; }
+function clearWeaponAction(){ shotTime=reloadTime=0; shotImpact=null; }
+function placeWeapons(tiles,entrance,center){
+  const locations=tiles.filter(t=>t!==entrance);
+  Object.keys(WEAPONS).forEach((id,i)=>{
+    const t=locations[Math.round(i*(locations.length-1)/4)] ?? entrance;
+    const origin=center(t);
+    const offset=[[2,-3],[3,2],[-3,-2],[0,-2],[0,2],[0,0]]
+      .find(([dx,dy])=>canStand(origin.x+dx,origin.y+dy)) ?? [0,0];
+    const spec=WEAPONS[id];
+    actors.push({kind:'weapon',x:origin.x+offset[0],y:origin.y+offset[1],
+      height:.29,id,ammo:spec.capacity,reserve:spec.reserve});
+  });
+}
+function takeWeapon(item){
+  const previous=carriedWeapon;
+  if(previous){
+    // Swapping at the pickup's position keeps the old weapon on walkable ground.
+    actors.push({kind:'weapon',x:item.x,y:item.y,height:.29,...previous});
+  }
+  carriedWeapon={id:item.id,ammo:item.ammo,reserve:item.reserve};
+  item.done=true;
+  weaponEquipped=true;
+  clearWeaponAction();
+  viewmodel=new ViewmodelCombat25D();
+  const name=WEAPONS[item.id].name;
+  tell(previous ? `Equipped ${name}. Dropped ${WEAPONS[previous.id].name}.` : `Equipped ${name}. Press G for fists or R to reload.`);
+}
+function toggleWeapon(){
+  if(!carriedWeapon||escaped||defeated) return;
+  weaponEquipped=!weaponEquipped;
+  clearWeaponAction();
+  viewmodel=new ViewmodelCombat25D();
+  turn++;
+  tell(weaponEquipped?`Equipped ${WEAPONS[carriedWeapon.id].name}.`:'Weapon stowed. Fists ready.');
+}
+function reloadWeapon(){
+  const item=activeWeapon();
+  if(!item||escaped||defeated||reloadTime>0||item.ammo>=WEAPONS[item.id].capacity) return;
+  if(!item.reserve){ tell('No spare ammunition.');return; }
+  reloadTime=RELOAD_SECONDS;
+  turn++;
+}
+function fireWeapon(){
+  const item=activeWeapon();
+  if(shotTime>0||reloadTime>0) return;
+  if(!item.ammo){ tell('Empty. Press R to reload.');return; }
+  item.ammo--;
+  shotTime=WEAPONS[item.id].interval;
+  const dx=Math.cos(player.angle),dy=Math.sin(player.angle),wall=cast(dx,dy);
+  const distance=tracePillar(dx,dy,pillars,wall.distance)?.distance ?? wall.distance;
+  shotImpact={x:player.x+dx*distance,y:player.y+dy*distance,age:0};
+  turn++;
+}
+function updateWeapon(dt){
+  shotTime=Math.max(0,shotTime-dt);
+  if(shotImpact){
+    shotImpact.age+=dt;
+    if(shotImpact.age>=.18) shotImpact=null;
+  }
+  if(reloadTime===0) return;
+  reloadTime=Math.max(0,reloadTime-dt);
+  if(reloadTime>0) return;
+  const item=activeWeapon();
+  if(!item) return;
+  const amount=Math.min(WEAPONS[item.id].capacity-item.ammo,item.reserve);
+  item.ammo+=amount;
+  item.reserve-=amount;
+  turn++;
+}
+
 function restart() {
   const fieldTest=locationSelect.value==='acid-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
@@ -402,6 +482,10 @@ function restart() {
     const acid=actors.find(a=>a.kind==='trap'&&a.name==='acid');
     Object.assign(player,{x:acid.x,y:acid.y+4.6,angle:-Math.PI/2});
   }
+  carriedWeapon=null;
+  weaponEquipped=false;
+  clearWeaponAction();
+  placeWeapons(layout.tiles,entrance,center);
   pillars=actors.filter(a=>a.kind==='pillar');
   torches=actors.filter(a=>a.kind==='torch');
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
@@ -417,7 +501,7 @@ function restart() {
   byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
   if(fieldTest) tell('Walk around the pillars and look toward the torches. Use Acid chamber finish to compare materials.');
-  else tell('Pick up the iron key ahead. Use F or Interact at doors and crates. Watch for traps.');
+  else tell('Pick up the iron key ahead. Use F or Interact at doors, crates, and weapon pickups. Watch for traps.');
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -448,8 +532,11 @@ function interact() {
     turn++;
     return;
   }
-  const a=targetActor(['crate','key','iron-key','exit']);
+  const a=targetActor(['crate','key','iron-key','exit','weapon']);
   switch(a?.kind){
+    case 'weapon':
+      takeWeapon(a);
+      break;
     case 'crate': {
       if(a.locked && !picks && !ironKey && !hasKey){
         tell('Locked crate. Use a key or buy a Lockpick Set at the entrance.');
@@ -478,7 +565,7 @@ function interact() {
       tell(recoveredCache ? 'Expedition complete. You returned with your loot.' : 'You withdrew safely with your loot.');
       break;
     default:
-      tell('Move closer to a crate, key, or the entrance marker.');
+      tell('Move closer to a crate, weapon, key, or the entrance marker.');
   }
   turn++;
 }
@@ -848,6 +935,7 @@ sprites.spores=surface(48,48,rect=>{
 });
 
 function spriteFor(actor) {
+  if(actor.kind==='weapon') return weaponIcons[actor.id];
   if(actor.kind==='furnishing') return roomProps[actor.art];
   return actor.kind==='crate' ? sprites[actor.done?'opened':actor.locked?'lockedCrate':'crate'] : sprites[actor.kind];
 }
@@ -1106,7 +1194,10 @@ function renderFirstPerson(flicker) {
   const field=roomLights[Math.floor(player.y/ROOM_SPACING)]?.[Math.floor(player.x/ROOM_SPACING)];
   const sector=[1,0];
   if(field) sampleRoomLight(field,player.x,player.y,sector);
-  viewmodel.render(ctx,width,height,Math.min(1.24,sector[0]*.72+sector[1]*flicker*.49),sector[1]*flicker);
+  const light=Math.min(1.24,sector[0]*.72+sector[1]*flicker*.49),warmth=sector[1]*flicker;
+  const item=activeWeapon();
+  if(item) drawWeaponModel(item,light,warmth);
+  else viewmodel.render(ctx,width,height,light,warmth);
   drawCrosshair();
 }
 const archLighting=[0,0];
@@ -1488,8 +1579,91 @@ class ViewmodelCombat25D {
 }
 let viewmodel=new ViewmodelCombat25D();
 function punch(){
-  if(mode==='eye' && !escaped && !defeated) viewmodel.punch();
+  if(mode!=='eye'||escaped||defeated) return;
+  if(activeWeapon()) fireWeapon();
+  else viewmodel.punch();
 }
+const pistolPreview=typeof Image==='undefined'?null:new Image();
+if(pistolPreview) pistolPreview.src='data:image/webp;base64,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';
+const weaponIcons=Object.fromEntries(Object.entries(WEAPONS).map(([id,spec])=>[id,surface(64,26,rect=>{
+  rect('#5c5445',3,20,58,4);
+  rect('#6e725c',3,17,58,4);
+  rect('#282e30',id==='pistol'?19:8,7,id==='pistol'?29:48,8);
+  rect(spec.color,id==='pistol'?20:9,7,id==='pistol'?27:46,4);
+  rect('#26282a',35,14,7,6);
+  if(id!=='pistol') rect('#26282a',55,8,7,3);
+})]));
+function weaponShape(points,color){
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.moveTo(...points[0]);
+  for(const p of points.slice(1)) ctx.lineTo(...p);
+  ctx.closePath();ctx.fill();
+}
+function drawWeaponModel(item,light,warmth){
+  const spec=WEAPONS[item.id];
+  const shotAge=shotTime>0?spec.interval-shotTime:Infinity;
+  const kick=spec.kick*Math.max(0,1-shotAge/.17)**2;
+  const reload=reloadTime>0?Math.sin(Math.PI*(1-reloadTime/RELOAD_SECONDS)):0;
+  const sway=Math.sin(viewmodel.bobPhase*.5)*viewmodel.walkSway*4;
+  const bob=Math.cos(viewmodel.bobPhase)*viewmodel.walkSway*2;
+  ctx.save();
+  ctx.scale(width/480,height/300);
+  ctx.translate(353+sway+kick*.45,244+bob-kick*.62+reload*24);
+  ctx.rotate(-kick*.005+reload*.19);
+  const end=-spec.length, top=-48;
+  if(item.id==='pistol'&&pistolPreview?.complete&&pistolPreview.naturalWidth){
+    ctx.drawImage(pistolPreview,-56,-84,135,146);
+  } else {
+    const rail=ctx.createLinearGradient(0,top,0,14);
+    rail.addColorStop(0,viewmodel.litColor(136,139,140,light,warmth));
+    rail.addColorStop(.24,spec.color);
+    rail.addColorStop(1,'#1a1d20');
+    weaponShape([[end,top],[end+24,top-4],[17,-19],[40,5],[26,19],[-2,12],[end-2,top+11]],rail);
+    weaponShape([[end+4,top-1],[end+10,top-1],[end+10,top-8],[end+5,top-8]],'#33383a');
+    weaponShape([[1,-22],[11,-24],[17,-15],[7,-13]],'#858989');
+    if(item.id!=='pistol'){
+      const finish=['shotgun','ak47'].includes(item.id)?'#785943':'#454d51';
+      weaponShape([[end+14,top+5],[end+39,top+7],[-38,-18],[-52,-9],[end+12,top+17]],finish);
+      if(item.id==='ak47'){
+        weaponShape([[-20,-2],[-7,1],[-10,17],[-23,32],[-35,28],[-24,14]],'#292925');
+      } else if(item.id==='ar15'){
+        weaponShape([[-17,-2],[-3,2],[-11,29],[-23,27]],'#2d3336');
+        for(let x=-78;x<-40;x+=8) weaponShape([[x,-37],[x+3,-37],[x+4,-31],[x+1,-31]],'#252a2e');
+      } else if(item.id==='smg'){
+        weaponShape([[-15,-2],[-7,0],[-12,24],[-20,23]],'#262b2e');
+      } else {
+        weaponShape([[end+3,top+9],[end+21,top+10],[end+21,top+15],[end+3,top+14]],'#343137');
+      }
+      ctx.save();
+      ctx.translate(-44,-14);
+      ctx.rotate(-.38+reload*.35);ctx.scale(.43,.43);
+      viewmodel.drawRealisticFist(ctx,light,warmth,false);
+      ctx.restore();
+    }
+    viewmodel.drawRealisticArm(ctx,107,85,16,24,.83,light,warmth);
+    ctx.save();
+    viewmodel.poseFist(ctx,16,24,.83,-.27,light,warmth,false);
+    ctx.restore();
+  }
+  if(reload>.16){
+    viewmodel.drawRealisticArm(ctx,-113,88,-18,18+reload*8,.82,light,warmth);
+    ctx.save();
+    viewmodel.poseFist(ctx,-18,18+reload*8,.82,.35,light,warmth,false);
+    ctx.restore();
+  }
+  if(shotAge<.055){
+    const x=item.id==='pistol'?-40:end, y=item.id==='pistol'?-62:top;
+    const glow=ctx.createRadialGradient(x,y,0,x,y,spec.flash*2);
+    glow.addColorStop(0,'#fff3cfbb');glow.addColorStop(1,'#ffad4600');
+    ctx.fillStyle=glow;
+    ctx.fillRect(x-spec.flash*2,y-spec.flash*2,spec.flash*4,spec.flash*4);
+    weaponShape([[x-spec.flash,y],[x-2,y-2],[x,y-spec.flash],[x+2,y-2],[x+spec.flash,y],
+      [x+2,y+2],[x,y+spec.flash],[x-2,y+2]],'#ffcf80');
+  }
+  ctx.restore();
+}
+
 function castMeleeRay(){
   const dx=Math.cos(player.angle),dy=Math.sin(player.angle);
   const wall=cast(dx,dy);
@@ -1499,7 +1673,7 @@ function castMeleeRay(){
   return {x:player.x+dx*distance,y:player.y+dy*distance};
 }
 function drawPunchImpact(fx,fy,rx,ry){
-  const impact=viewmodel.impact;
+  const impact=shotImpact ?? viewmodel.impact;
   if(!impact) return;
   const dx=impact.x-player.x,dy=impact.y-player.y;
   const d=fx*dx+fy*dy;
@@ -1595,7 +1769,7 @@ function renderMap(mini=false) {
     }
     if (mini || size<12) {
       if (a.kind!=='torch' && a.kind!=='trap') {
-        ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',key:'#f9e58a','iron-key':'#f9e58a',exit:'#84cc91'})[a.kind];
+        ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',key:'#f9e58a','iron-key':'#f9e58a',weapon:'#8ed9fa',exit:'#84cc91'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
         ctx.arc(left+a.x*size,top+a.y*size,Math.max(1.2,size*.32),0,Math.PI*2);
@@ -1636,6 +1810,8 @@ addEventListener('keydown',event => {
     if(!event.repeat) punch();
   }
   if (!event.repeat && key==='f') interact();
+  if (!event.repeat && key==='g') toggleWeapon();
+  if (!event.repeat && key==='r') reloadWeapon();
   if (!event.repeat && key === 'h') heal();
   if (!event.repeat && key === 'v') setMode(mode === 'eye' ? 'map' : 'eye');
 });
@@ -1676,6 +1852,8 @@ byId('interact').onclick = interact;
 byId('reset').onclick = restart;
 locationSelect.onchange=restart;
 byId('punch').onclick=punch;
+byId('weapon-toggle').onclick=toggleWeapon;
+byId('reload').onclick=reloadWeapon;
 byId('heal').onclick=heal;
 byId('buy').onclick=buyPick;
 const down = key => keys.has(key) || [...held.values()].includes(key);
@@ -1697,8 +1875,9 @@ function frame(now) {
   }
   const travelled=Math.hypot(player.x-beforeX,player.y-beforeY);
   viewmodel.update(dt,dt>0?travelled/dt:0,travelled>0?strafe:0);
+  updateWeapon(dt);
   const torchTick=mode === 'eye' ? Math.floor(now/80) : 0;
-  const viewState=[mode,player.x,player.y,player.angle,turn,torchTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&viewmodel.impact?now:0].join('|');
+  const viewState=[mode,player.x,player.y,player.angle,turn,torchTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
@@ -1706,7 +1885,15 @@ function frame(now) {
   lastRender = viewState;
   const roomName=tile(Math.floor(player.x),Math.floor(player.y))==='.' ?
     rooms.get(roomKey({x:Math.floor(player.x/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER,y:Math.floor(player.y/ROOM_SPACING)*ROOM_SPACING+ROOM_CENTER})) : 'Archway';
-  byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}`;
+  const item=activeWeapon();
+  byId('punch').textContent=item?'Fire':'Punch';
+  byId('weapon-toggle').textContent=item?'Stow weapon':'Equip weapon';
+  byId('weapon-toggle').disabled=!carriedWeapon||escaped||defeated;
+  byId('reload').disabled=!item||escaped||defeated||item.ammo>=WEAPONS[item.id].capacity||!item.reserve||reloadTime>0;
+  const equipment=carriedWeapon ? (item?
+    `${WEAPONS[item.id].name} ${item.ammo}/${item.reserve}${reloadTime>0?' · Reloading':''}`:
+    `Fists (${WEAPONS[carriedWeapon.id].name} stowed)`) : 'Fists';
+  byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks} · ${equipment}`;
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
   byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}${recoveredCache?'Main supplies recovered · ':''}Loot ${loot}`;
   if (mode === 'eye') {
