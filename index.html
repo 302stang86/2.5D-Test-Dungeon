@@ -50,17 +50,16 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <button data-hold="e" aria-label="Turn right">↷</button>
 <button id="interact">Interact</button>
 <button id="punch">Punch</button> <button id="weapon-toggle" disabled>Equip weapon</button> <button id="reload" disabled>Reload</button>
-<button id="heal">Heal</button><button id="buy">Buy lockpick</button>
+<button id="heal">Use bandage</button>
 <button id="reset">New layout</button>
 </div>
-<p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space or left-click to use fists or weapon, G to equip or stow, R to reload, H to heal, V to switch views. Drag the first-person view to look around.</p>
+<p class="hint">WASD to move, Q/E or ←/→ to turn, F to interact, Space or left-click to use fists or weapon, G to equip or stow, R to reload, H to use a bandage, V to switch views. Drag the first-person view to look around.</p>
 </main>
 <script>
 'use strict';
 
 // Standalone layout code adapted from Stronghold Architect: dungeons.js (434bdd1), world.js (c840d8a), and room definitions.
 const DIRS=[[0,-1],[1,0],[0,1],[-1,0]];
-const LOCKPICK_ID=31, ITEMS={[LOCKPICK_ID]:{price:30}};
 const GRID=30;
 const TYPES=[
 ['Throne Room',0,0,0,[],'The heart of your keep. Produces 20 gold and 12 stone daily.'],
@@ -111,12 +110,9 @@ const DUNGEON_INTERIOR_ART=[
 ];
 
 const DUNGEON_TIERS=[
-  {id:'dungeon-low',name:'Forgotten Cellar',crateCount:3,occupancy:.3,rooms:[2,3,16,18],
-    reward:{gold:65,stone:30,food:20,rp:8}},
-  {id:'dungeon-medium',name:'Buried Keep',crateCount:5,occupancy:.6,rooms:[3,5,6,8,19],
-    reward:{gold:145,stone:75,food:35,rp:25}},
-  {id:'dungeon-high',name:'Hollow Citadel',crateCount:8,occupancy:.9,rooms:[3,4,7,9,18,19],
-    reward:{gold:300,stone:150,food:65,rp:60}}
+  {id:'dungeon-low',name:'Forgotten Cellar',crateCount:3,occupancy:.3,rooms:[2,3,16,18]},
+  {id:'dungeon-medium',name:'Buried Keep',crateCount:5,occupancy:.6,rooms:[3,5,6,8,19]},
+  {id:'dungeon-high',name:'Hollow Citadel',crateCount:8,occupancy:.9,rooms:[3,4,7,9,18,19]}
 ];
 
 
@@ -150,15 +146,8 @@ function generateDungeon(tier){
  const vaultKey=roomKey(vault);
  vault.type=10;
  const sideRooms=rooms.filter(room=>room!==vault);
- const keyRoom=index>0?roomKey(pick(sideRooms.filter(room=>room.depth>=2))):null;
- const caches={};
- const cachePool=[...sideRooms];
- for(let count=[7,12,18][index];count>0;count--){
-  const [room]=cachePool.splice(roll(cachePool.length),1);
-  caches[roomKey(room)]={[pick(['gold','food','stone','rp'])]:4+index*5+roll(7)};
- }
- for(const room of sideRooms)room.type=pick(tier.rooms);
- const specialPool=sideRooms.filter(room=>room!==first&&roomKey(room)!==keyRoom);
+ for(const room of sideRooms) room.type=pick(tier.rooms);
+ const specialPool=sideRooms.filter(room=>room!==first);
  const junctions=specialPool.filter(room=>room.ports.length>=2);
  const halls=[];
  while(halls.length<Math.ceil(total*.2)){
@@ -187,21 +176,13 @@ function generateDungeon(tier){
   else if(room.type===15)room.dungeonArt=pick(['crossroads-1','crossroads-2']);
   else if(room.type!==14)room.dungeonArt=pick(DUNGEON_INTERIOR_ART);
  }
- const layout={version:DUNGEON_LAYOUT_VERSION,rulingName:tier.name,tiles,caches,vaultKey,keyRoom,progress:null};
- placeDungeonCrates(layout,tier);
- return layout;
-}
-
-function placeDungeonCrates(layout,tier){
- if(layout.crates)return false;
- const candidates=layout.tiles.filter(room=>room.type!==17&&![12,13,14,15].includes(room.type)&&roomKey(room)!==layout.vaultKey);
- layout.crates={};
- for(let i=0;i<=tier.crateCount&&candidates.length;i++){
-  const [room]=candidates.splice(Math.floor(Math.random()*candidates.length),1);
-  const locked=i===0;
-  layout.crates[roomKey(room)]={locked,gold:locked?ITEMS[LOCKPICK_ID].price*3:8+Math.floor(Math.random()*8)};
+ const crateRooms=new Set([roomKey(first),vaultKey]);
+ const candidates=sideRooms.filter(t=>t!==first&&!(t.type>=12&&t.type<=15));
+ while(crateRooms.size<tier.crateCount+3 && candidates.length){
+   const [t]=candidates.splice(roll(candidates.length),1);
+   crateRooms.add(roomKey(t));
  }
- return true;
+ return {rulingName:tier.name,tiles,vaultKey,crateRooms};
 }
 
 
@@ -227,8 +208,7 @@ function layout(){
 
 
 function rival(){
-  return {rulingName:NAMES[ri(NAMES.length)],tiles:layout(),
-    treasury:{gold:120+ri(200),stone:60+ri(100),food:60+ri(100),rp:10+ri(30)}};
+  return {rulingName:NAMES[ri(NAMES.length)],tiles:layout()};
 }
 
 const ROOM_SIZE=13, ROOM_SPACING=ROOM_SIZE+1;
@@ -238,7 +218,7 @@ const ARCH_LEFT=Math.floor(ARCH_HALF), ARCH_RIGHT=ARCH_WIDTH-ARCH_LEFT;
 const ROOM_CENTER=ROOM_LEFT+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
-let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,ceilingLights,site,health,lootBag,purse,picks,potions,defeated,recoveredCache,turn;
+let room,rooms,roomThemes,pillars,arches,mapLayers,actors,ceilingLights,site,health,bandages,defeated,recoveredCache,turn;
 const canvas = document.querySelector('#view');
 const desktop=globalThis.matchMedia?.('(min-width: 900px) and (pointer: fine)').matches;
 if(desktop){ canvas.width=640; canvas.height=400; }
@@ -251,7 +231,7 @@ const buttons = [...document.querySelectorAll('[data-hold]')];
 const keys = new Set();
 const held = new Map();
 const player = {};
-let mode = 'eye', hasKey, escaped, drag, roomLights, smoothAcid=true;
+let mode = 'eye', escaped, drag, roomLights, smoothAcid=true;
 const byId = id => document.getElementById(id);
 const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
@@ -314,18 +294,19 @@ let carriedWeapon=null, weaponEquipped=false, shotTime=0, reloadTime=0, shotImpa
 const RELOAD_SECONDS=1.15;
 function activeWeapon(){ return weaponEquipped ? carriedWeapon : null; }
 function clearWeaponAction(){ shotTime=reloadTime=0; shotImpact=null; }
-function placeWeapons(tiles,entrance,center){
-  const locations=tiles.filter(t=>t!==entrance);
-  Object.keys(WEAPONS).forEach((id,i)=>{
-    const t=locations[Math.round(i*(locations.length-1)/4)] ?? entrance;
-    const origin=center(t);
-    const offset=[[2,-3],[3,2],[-3,-2],[0,-2],[0,2],[0,0]]
-      .find(([dx,dy])=>canStand(origin.x+dx,origin.y+dy)) ?? [0,0];
-    const spec=WEAPONS[id];
-    actors.push({kind:'weapon',x:origin.x+offset[0],y:origin.y+offset[1],
-      height:.29,id,ammo:spec.capacity,reserve:spec.reserve});
-  });
+function stockChests(spawn){
+  const chests=actors.filter(a=>a.kind==='crate');
+  const ids=Object.keys(WEAPONS);
+  // Small strongholds may need extra chests in the entrance.
+  const extraPositions=[[-3,-3],[3,-3],[-3,3],[3,3],[0,-4]];
+  while(chests.length<ids.length){
+    const [dx,dy]=extraPositions.shift();
+    const chest={kind:'crate',x:spawn.x+dx,y:spawn.y+dy,height:.38,radius:.34,bandages:1};
+    actors.push(chest);chests.push(chest);
+  }
+  ids.forEach((id,i)=>{ chests[Math.round(i*(chests.length-1)/(ids.length-1))].weapon=id; });
 }
+
 function takeWeapon(item){
   const previous=carriedWeapon;
   if(previous){
@@ -397,10 +378,8 @@ function restart() {
   room=Array.from({length:rows},()=>Array(cols).fill('#'));
   rooms=new Map();
   roomThemes=Array.from({length:Math.ceil(rows/ROOM_SPACING)},()=>[]);
-  doors=new Map();
+  arches=new Map();
   mapLayers=new Map();
-  doorVersion=0;
-  ironKey=false;
   actors=[];
   ceilingLights=[];
   const vaultKey=layout.vaultKey ?? roomKey(layout.tiles.find(t=>t.type===0));
@@ -410,10 +389,6 @@ function restart() {
   }
   const entrance=layout.tiles.find(t=>t.type===17);
   const center=t=>({x:(t.x-originX)*ROOM_SPACING+ROOM_CENTER+.5,y:(t.y-originY)*ROOM_SPACING+ROOM_CENTER+.5});
-  const vaultRoom=grid.get(vaultKey);
-  const production={0:['gold','stone'],2:['food'],3:['stone'],5:['rp'],10:['gold'],18:['gold'],19:['rp']};
-  const producers={gold:0,stone:0,food:0,rp:0};
-  for(const tile of layout.tiles) for(const kind of production[tile.type] ?? []) producers[kind]++;
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const hall=t.type>=12 && t.type<=15;
@@ -436,32 +411,21 @@ function restart() {
         }
       }
       const archX=cx+dx*boundary, archY=cy+dy*boundary;
-      if(doors.has(cellKey(archX,archY))) continue;
-      const vault=(t===vaultRoom || neighbor===vaultRoom) && !!layout.keyRoom;
-      const status=vault ? 'locked' : ['bare','open','closed','locked'][doors.size/ARCH_WIDTH%4];
-      const arch={status,vault,axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
+      if(arches.has(cellKey(archX,archY))) continue;
+      const arch={axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
       for(let lane=-ARCH_LEFT;lane<ARCH_RIGHT;lane++){
         const col=archX+Math.abs(dy)*lane;
         const rowIndex=archY+Math.abs(dx)*lane;
         room[rowIndex][col]='A';
-        doors.set(cellKey(col,rowIndex),arch);
+        arches.set(cellKey(col,rowIndex),arch);
       }
     }
 
-    const resourceKinds=production[t.type] ?? [];
-    const loot=key===vaultKey ? (site?.reward ?? {gold:35,stone:12,food:8,rp:4}) :
-      site ? layout.caches[key] : resourceKinds.length ?
-        Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*.1)])) : null;
-    const crate=layout.crates?.[key];
-    if(crate || loot){
-      if(hall){
-        room[cy][cx+1]='.';
-        room[cy+1][cx+1]='.';
-      }
-      const inset=hall ? 1 : ROOM_RIGHT-1;
-      actors.push({kind:'crate',x:x+inset,y:y+inset,height:.38,radius:.34,locked:!!crate?.locked,bonus:crate?.gold ?? 0,loot,mainCache:key===vaultKey});
+    if(layout.crateRooms?.has(key) || (!site && !hall && t!==entrance)){
+      const inset=ROOM_RIGHT-1;
+      actors.push({kind:'crate',x:x+inset,y:y+inset,height:.38,radius:.34,
+        bandages:key===vaultKey?2:1,mainCache:key===vaultKey});
     }
-    if(layout.keyRoom===key) actors.push({kind:'key',x:x-(hall?0:.92),y:y+(hall?0:.76),height:.25});
     if(trapName){
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
@@ -482,7 +446,6 @@ function restart() {
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
   actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
-  actors.push({kind:'iron-key',x:spawn.x,y:spawn.y-.25,height:.25});
   if(fieldTest){
     const acid=actors.find(a=>a.kind==='trap'&&a.name==='acid');
     Object.assign(player,{x:acid.x,y:acid.y+4.6,angle:-Math.PI/2});
@@ -490,15 +453,12 @@ function restart() {
   carriedWeapon=null;
   weaponEquipped=false;
   clearWeaponAction();
-  placeWeapons(layout.tiles,entrance,center);
+  stockChests(spawn);
   pillars=actors.filter(a=>a.kind==='pillar');
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
   health=100;
-  lootBag={gold:0,stone:0,food:0,rp:0};
-  purse=30;
-  picks=0;
-  potions=site?.id==='dungeon-high' ? 3 : 2;
-  hasKey=escaped=defeated=recoveredCache=false;
+  bandages=0;
+  escaped=defeated=recoveredCache=false;
   viewmodel=new ViewmodelCombat25D();
   turn=0;
   startGuard();
@@ -506,7 +466,7 @@ function restart() {
   byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
   if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
-  else tell('Pick up the iron key ahead. Use F or Interact at doors, crates, and weapon pickups. Watch for traps.');
+  else tell('Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -518,59 +478,34 @@ function targetActor(kinds,range=1.65,requireFacing=true) {
   )).sort((a,b)=>a.d-b.d)[0]?.a;
 }
 
-function collect(resources) {
-  for(const [kind,amount] of Object.entries(resources)) lootBag[kind]+=amount;
-}
-
 function interact() {
   if(escaped || defeated) return;
-  const door=nearbyDoor();
-  if(door){
-    if(door.status==='locked'){
-      const key=door.vault ? hasKey : ironKey;
-      if(!key && !picks){ tell(door.vault?'Locked vault. Find the vault key or use a lockpick.':'Locked door. Use the iron key or a lockpick.'); return; }
-      if(!key) picks--;
-      tell(key?'Unlocked the door with your key.':'Picked the lock and opened the door.');
-    } else tell('Opened the door.');
-    door.status='open';
-    doorVersion++;
-    turn++;
-    return;
-  }
-  const a=targetActor(['crate','key','iron-key','exit','weapon']);
+  const a=targetActor(['crate','exit','weapon']);
   switch(a?.kind){
     case 'weapon':
       takeWeapon(a);
       break;
     case 'crate': {
-      if(a.locked && !picks && !ironKey && !hasKey){
-        tell('Locked crate. Use a key or buy a Lockpick Set at the entrance.');
-        return;
-      }
-      if(a.locked && !ironKey && !hasKey) picks--;
-      const contents={...a.loot};
-      if(a.bonus) contents.gold=(contents.gold ?? 0)+a.bonus;
-      collect(contents);
+      bandages+=a.bandages;
       a.done=true;
       if(a.mainCache) recoveredCache=true;
-      const inventory=Object.entries(contents).map(([kind,amount])=>amount+' '+kind).join(', ');
-      tell(a.mainCache ? `Main supplies recovered (${inventory}). Return to the entrance.` : `Collected ${inventory}.`);
+      const found=a.bandages===1?'1 bandage':`${a.bandages} bandages`;
+      if(a.weapon){
+        const spec=WEAPONS[a.weapon];
+        actors.push({kind:'weapon',x:a.x,y:a.y,height:.29,lift:.40,
+          id:a.weapon,ammo:spec.capacity,reserve:spec.reserve});
+        tell(`Collected ${found}. Press F again to equip the ${spec.name}.`);
+      } else {
+        tell(a.mainCache?`Main supplies recovered: ${found}. Return to the entrance.`:`Collected ${found}.`);
+      }
       break;
     }
-    case 'iron-key':
-      a.done=ironKey=true;
-      tell('Iron key collected. It opens ordinary locked doors and supply crates.');
-      break;
-    case 'key':
-      a.done=hasKey=true;
-      tell('Vault key recovered. Use it at the locked vault door.');
-      break;
     case 'exit':
       escaped=true;
-      tell(recoveredCache ? 'Expedition complete. You returned with your loot.' : 'You withdrew safely with your loot.');
+      tell(recoveredCache ? 'Expedition complete. You recovered the main supplies.' : 'You withdrew safely.');
       break;
     default:
-      tell('Move closer to a crate, weapon, key, or the entrance marker.');
+      tell('Move closer to a crate, weapon, or the entrance marker.');
   }
   turn++;
 }
@@ -579,29 +514,17 @@ function hurt(damage) {
   health=Math.max(0,health-damage);
   if (!health) {
     defeated=true;
-    for(const kind of Object.keys(lootBag)) lootBag[kind]=0;
-    tell('You were defeated and lost the expedition loot. Restart to try a new layout.');
+    tell('You were defeated. Restart to try a new layout.');
   }
 }
 
-function buyPick(){
-  if(escaped || defeated) return;
-  if(!targetActor(['exit'],1.8,false)){ tell('Lockpick Sets are sold at the entrance.'); return; }
-  if(purse+lootBag.gold<30){ tell('A Lockpick Set costs 30 gold.'); return; }
-  const spent=Math.min(purse,30);
-  purse-=spent;
-  lootBag.gold-=30-spent;
-  picks++;
-  turn++;
-  tell('Bought one Lockpick Set for 30 gold.');
-}
 function heal(){
   if(escaped || defeated) return;
-  if (!potions || health===100){ tell(potions?'Your health is already full.':'No healing potions remain.'); return; }
-  potions--;
+  if (!bandages || health===100){ tell(bandages?'Your health is already full.':'No bandages remain.'); return; }
+  bandages--;
   health=Math.min(100,health+45);
   turn++;
-  tell(`Drank a healing potion. Health is now ${health}/100.`);
+  tell(`Used a bandage. Health is now ${health}/100.`);
 }
 function triggerTraps(){
   const trap=actors.find(a=>a.kind==='trap'&&!a.done && Math.abs(a.x-player.x)<1.45 && Math.abs(a.y-player.y)<1.45);
@@ -613,33 +536,12 @@ function triggerTraps(){
   hurt(damage);
 }
 function cellKey(x,y) { return y*room[0].length+x; }
-function isClosed(door) { return !guardPassages.has(door) && (door.status==='closed' || door.status==='locked'); }
-function nearbyDoor(){
-  const seen=new Set();
-  let nearest, best=1.65;
-  const px=Math.floor(player.x),py=Math.floor(player.y);
-  for(let y=py-2;y<=py+2;y++) for(let x=px-2;x<=px+2;x++){
-    if(tile(x,y)!=='A') continue;
-    const door=doors.get(cellKey(x,y));
-    if(!isClosed(door) || seen.has(door)) continue;
-    seen.add(door);
-    const tx=door.axis==='x' ? door.x : Math.max(door.x-ARCH_HALF+.05,Math.min(player.x,door.x+ARCH_HALF-.05));
-    const ty=door.axis==='y' ? door.y : Math.max(door.y-ARCH_HALF+.05,Math.min(player.y,door.y+ARCH_HALF-.05));
-    const dx=tx-player.x,dy=ty-player.y,d=Math.hypot(dx,dy);
-    if(d>best || (mode==='eye' && Math.cos(player.angle)*dx+Math.sin(player.angle)*dy<d*.4)) continue;
-    const hit=cast(dx,dy);
-    if(doors.get(cellKey(hit.x,hit.y))!==door) continue;
-    best=d;
-    nearest=door;
-  }
-  return nearest;
-}
 function tile(x,y) {
   return room[y]?.[x] ?? '#';
 }
 function solid(x,y) {
   const cell = tile(x,y);
-  return cell === '#' || cell === 'W' || cell === 'B' || (cell==='A' && isClosed(doors.get(cellKey(x,y))));
+  return cell === '#' || cell === 'W' || cell === 'B';
 }
 function canStand(x,y) {
   const r = 0.17;
@@ -665,8 +567,8 @@ function cast(dx,dy,arches,origin=player) {
     if (side === 'x') { distance = nextX; nextX += deltaX; x += stepX; }
     else { distance = nextY; nextY += deltaY; y += stepY; }
     if(arches && tile(x,y)==='A'){
-      const arch=doors.get(cellKey(x,y));
-      if(!isClosed(arch) && arch.axis===side){
+      const arch=arches.get(cellKey(x,y));
+      if(arch.axis===side){
         const lateral=side==='x' ? origin.y+dy*distance-arch.y : origin.x+dx*distance-arch.x;
         arches.push({arch,distance,lateral});
       }
@@ -806,44 +708,7 @@ const themes=Object.fromEntries(Object.entries(ROOM_STYLES).map(([id,[floorColor
   return [id,{id,floorColor,wallColor,prop,wall:paintedWalls[wallIndex],design:WALL_DESIGNS[wallIndex],
     floor:base.getContext('2d').getImageData(0,0,64,64).data}];
 }));
-const walls = {
-  '#':stone(89,'#453a35'),
-  D:surface(64,64,rect => {
-    rect('#382519',0,0,64,64);
-    for (let x=2; x<64; x+=12) {
-      rect('#795133',x,0,10,64);
-      rect('#9c6942',x,0,2,64);
-    }
-    for (const y of [9,47]) {
-      rect('#373536',0,y,64,6);
-      for (let x=5; x<64; x+=12) rect('#9b9490',x,y+2,2,2);
-    }
-    rect('#e8b36a',49,33,5,4);
-  }),
-  G:surface(64,64,rect => {
-    rect('#242529',0,0,64,64);
-    for (let x=2; x<64; x+=9) {
-      rect('#60626a',x,0,5,64);
-      rect('#a0a1a2',x,0,1,64);
-    }
-    rect('#777982',0,15,64,4);
-    rect('#777982',0,47,64,4);
-    rect('#c99c62',28,30,8,10);
-  }),
-  B:surface(64,64,rect => {
-    rect('#33241d',0,0,64,64);
-    const bindings=['#905048','#776a47','#49645f','#956849'];
-    for (let row=0; row<3; row++) {
-      for (let x=4; x<59; x+=5) {
-        const h=9+(x+row)%6;
-        rect(bindings[(x+row)%4],x,row*21+16-h,4,h);
-        rect('#d1ab69',x,row*21+14,4,1);
-      }
-      rect('#885c3a',0,row*21+16,64,4);
-    }
-  })
-};
-function crateSprite(opened=false,locked=false){
+function crateSprite(opened=false){
   return surface(64,36,rect=>{
     rect('#1a211a',3,14,58,21);
     rect('#586147',4,15,55,17);
@@ -865,16 +730,13 @@ function crateSprite(opened=false,locked=false){
       rect('#9a9d78',6,9,51,2);
       rect('#37422e',4,15,55,2);
       for(const x of [14,45]) rect('#a1a490',x,14,5,7);
-      if(locked){
-        rect('#252721',29,16,7,7);
-        rect('#b9a36f',30,18,5,4);
-      }
+
     }
   });
 }
 
 const sprites={
-  crate:crateSprite(), opened:crateSprite(true), lockedCrate:crateSprite(false,true),
+  crate:crateSprite(), opened:crateSprite(true),
   pillar:surface(20,40,(rect,g) => {
     const gradient=g.createLinearGradient(3,0,17,0);
     gradient.addColorStop(0,'#484044'); gradient.addColorStop(.45,'#a3998f'); gradient.addColorStop(1,'#4d4445');
@@ -888,10 +750,6 @@ const sprites={
   }),
 
 };
-sprites.key=surface(24,12,rect=>{
-  rect('#d9a749',2,1,8,9); rect('#654724',4,3,4,4); rect('#ffd46c',9,4,13,3); rect('#d9a749',18,6,4,4);
-});
-sprites['iron-key']=sprites.key;
 sprites.trap=surface(32,8,rect=>{
   rect('#512826',0,2,32,6);
   for(let x=1;x<32;x+=5) rect('#a48570',x,2,2,4);
@@ -940,10 +798,8 @@ const GUARD_HALF_ANGLE=.37;
 const GUARD_RAYS=32;
 const GUARD_DAMAGE={pistol:24,shotgun:55,ar15:25,ak47:30,smg:17};
 let guard=null, guardFloor, guardWaypoints;
-const guardPassages=new Set();
 
 function startGuard(){
-  guardPassages.clear();
   const cols=room[0].length;
   guardFloor=room.map((row,y)=>row.map((cell,x)=>
     (cell==='.'||cell==='A') && !actors.some(a=>a.radius && Math.hypot(a.x-x-.5,a.y-y-.5)<a.radius+.22)));
@@ -996,8 +852,6 @@ function advanceGuard(x,y,dt,speed){
   const step=Math.min(d,dt*speed);
   if(step>.00001){
     guard.angle=Math.atan2(dy,dx);
-    const door=doors.get(cellKey(Math.floor(x),Math.floor(y)));
-    if(door && isClosed(door) && d<1.1){ guardPassages.add(door);doorVersion++; }
     guard.x+=dx*step/d;guard.y+=dy*step/d;
     guard.walk+=step;
     guard.moving=true;
@@ -1012,19 +866,11 @@ function followGuardPath(dt,speed){
   return true;
 }
 
-function releaseGuardDoors(){
-  for(const door of guardPassages){
-    if((!guard.done&&Math.hypot(door.x-guard.x,door.y-guard.y)<1.05) ||
-       Math.hypot(door.x-player.x,door.y-player.y)<.85) continue;
-    guardPassages.delete(door);doorVersion++;
-  }
-}
-
 function updateGuard(dt){
   if(!guard||escaped||defeated) return;
   guard.moving=false;
   guard.hitFlash=Math.max(0,guard.hitFlash-dt);
-  if(guard.done){ releaseGuardDoors();return; }
+  if(guard.done) return;
   guard.attackCooldown=Math.max(0,guard.attackCooldown-dt);
   guard.repath=Math.max(0,guard.repath-dt);
   const sees=guardSeesPlayer();
@@ -1071,7 +917,6 @@ function updateGuard(dt){
       }
     }
   }
-  releaseGuardDoors();
   refreshGuardBeam();
   updateGuardStatus(!defeated&&guardSeesPlayer());
 }
@@ -1085,7 +930,6 @@ function hitGuard(dx,dy,limit,damage){
   turn++;
   if(!guard.hp){
     guard.done=true;
-    releaseGuardDoors();
     updateGuardStatus(false);
     tell('Guard defeated.');
   } else {
@@ -1172,7 +1016,7 @@ function spriteFor(actor) {
   if(actor.kind==='guard') return guardSprite(actor);
   if(actor.kind==='weapon') return weaponIcons[actor.id];
   if(actor.kind==='furnishing') return roomProps[actor.art];
-  return actor.kind==='crate' ? sprites[actor.done?'opened':actor.locked?'lockedCrate':'crate'] : sprites[actor.kind];
+  return actor.kind==='crate' ? sprites[actor.done?'opened':'crate'] : sprites[actor.kind];
 }
 function visibleActor(actor) {
   return !actor.done || actor.kind==='crate';
@@ -1362,21 +1206,16 @@ function renderFirstPerson(flicker) {
     const d=Math.max(.01,column?.distance ?? hit.distance), scale=focal/d;
     const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
     depth[x] = d;
-    const cell=tile(hit.x,hit.y), door=!column && cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
     const face=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02));
     const smooth=usesSmoothFinish(face);
     if(column) paintPillar(x,top,h,column);
     else {
       const lateralOffset=hit.side==='x'?hit.x:hit.y;
       const variant=(lateralOffset+(hit.side==='x'?1:0)+3)%3;
-      const texture=door ? walls[door.status==='locked'?'G':'D'] : smooth ? face.smoothWalls[variant] : face.wall;
+      const texture=smooth ? face.smoothWalls[variant] : face.wall;
       const worldU=hit.side==='x' ? player.y+dy*d : player.x+dx*d;
-      const source=smooth&&!door ? (Math.floor(worldU*108+lateralOffset*51)&511) : Math.floor(hit.u*texture.width);
+      const source=smooth ? (Math.floor(worldU*108+lateralOffset*51)&511) : Math.floor(hit.u*texture.width);
       ctx.drawImage(texture,source,0,1,texture.height,x,top,1,h);
-    }
-    if(door){
-      const lateral=door.axis==='x' ? player.y+(fy+ry*camera)*d-door.y : player.x+(fx+rx*camera)*d-door.x;
-      paintArch(x,d,lateral,face);
     }
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     const ceilingGlow=ceilingLightAt(hitX-dx*.02,hitY-dy*.02)*flicker;
@@ -1403,7 +1242,7 @@ function renderFirstPerson(flicker) {
       const entry=Math.max(0,opening.distance-.02);
       const theme=themeAt(player.x+dx*entry,player.y+dy*entry);
       const glow=ceilingLightAt(player.x+dx*entry,player.y+dy*entry)*flicker;
-      opening.band=paintArch(x,opening.distance,opening.lateral,theme,opening.arch.status==='open',glow);
+      opening.band=paintArch(x,opening.distance,opening.lateral,theme,glow);
     }
   }
 
@@ -1450,7 +1289,7 @@ function ceilingLightAt(x,y){
   sampleRoomLight(field,x,y,archLighting);
   return archLighting[1];
 }
-function paintArch(column,distance,lateral,theme,openLeaf=false,glow=0){
+function paintArch(column,distance,lateral,theme,glow=0){
   const scale=focal/Math.max(.01,distance);
   const u=Math.min(1,Math.abs(lateral)/(ARCH_WIDTH/2));
   const {arch,base,accent}=theme.design;
@@ -1476,11 +1315,6 @@ function paintArch(column,distance,lateral,theme,openLeaf=false,glow=0){
   if(glow>0){
     ctx.fillStyle=`rgba(171,213,247,${glow*.22})`;
     ctx.fillRect(column,top,1,lip-top);
-  }
-  if(openLeaf && lateral<-ARCH_WIDTH/2+.13){
-    ctx.fillStyle='#67482f';
-    ctx.fillRect(column,lip,1,horizon+EYE_HEIGHT*scale-lip);
-    return [top,horizon+EYE_HEIGHT*scale];
   }
   return [top,lip];
 }
@@ -1952,18 +1786,16 @@ function renderMap(mini=false) {
   const left=mini ? 9 : (width-room[0].length*size)/2;
   const top=mini ? 9 : (height-room.length*size)/2;
   let layer=mapLayers.get(mini);
-  if(layer?.version!==doorVersion){
+  if(!layer){
     const image=surface(width,height,(rect)=>{
       rect('#15120f',mini?left-3:0,mini?top-3:0,mini?room[0].length*size+5:width,mini?room.length*size+5:height);
       room.forEach((row,y)=>row.forEach((cell,x)=>{
         if(cell==='#') return;
-        const door=cell==='A' ? doors.get(cellKey(x,y)) : null;
-        const color=door ? ({bare:'#d5bc97',open:'#ba9865',closed:'#a96838',locked:'#d45545'})[door.status] :
-          (cell==='.' ? themeAt(x,y).floorColor : '#8b8378');
+        const color=cell==='A'?'#d5bc97':cell==='.'?themeAt(x,y).floorColor:'#8b8378';
         rect(color,left+x*size,top+y*size,Math.ceil(size),Math.ceil(size));
       }));
     });
-    layer={version:doorVersion,image};
+    layer={image};
     mapLayers.set(mini,layer);
   }
   ctx.drawImage(layer.image,0,0);
@@ -2001,7 +1833,7 @@ function renderMap(mini=false) {
     }
     if (mini || size<12) {
       if (a.kind!=='trap') {
-        ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',key:'#f9e58a','iron-key':'#f9e58a',weapon:'#8ed9fa',guard:'#c1b578',exit:'#84cc91'})[a.kind];
+        ctx.fillStyle=({crate:a.mainCache?'#d6c884':'#a7b67c',weapon:'#8ed9fa',guard:'#c1b578',exit:'#84cc91'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
         ctx.arc(left+a.x*size,top+a.y*size,Math.max(1.2,size*.32),0,Math.PI*2);
@@ -2089,7 +1921,6 @@ byId('punch').onclick=punch;
 byId('weapon-toggle').onclick=toggleWeapon;
 byId('reload').onclick=reloadWeapon;
 byId('heal').onclick=heal;
-byId('buy').onclick=buyPick;
 const down = key => keys.has(key) || [...held.values()].includes(key);
 let previous, lastRender;
 function frame(now) {
@@ -2112,7 +1943,7 @@ function frame(now) {
   viewmodel.update(dt,dt>0?travelled/dt:0,travelled>0?strafe:0);
   updateWeapon(dt);
   const lightTick=mode === 'eye' ? Math.floor(now/80) : 0;
-  const viewState=[mode,player.x,player.y,player.angle,turn,doorVersion,guard?.x,guard?.y,guard?.angle,guard?.moving,lightTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
+  const viewState=[mode,player.x,player.y,player.angle,turn,guard?.x,guard?.y,guard?.angle,guard?.moving,lightTick,mode==='eye'&&viewmodel.state!=='IDLE'?now:0,mode==='eye'&&(viewmodel.impact||shotTime||reloadTime||shotImpact)?now:0].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
@@ -2128,9 +1959,8 @@ function frame(now) {
   const equipment=carriedWeapon ? (item?
     `${WEAPONS[item.id].name} ${item.ammo}/${item.reserve}${reloadTime>0?' · Reloading':''}`:
     `Fists (${WEAPONS[carriedWeapon.id].name} stowed)`) : 'Fists';
-  byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks} · ${equipment}`;
-  const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
-  byId('inventory').textContent=`${defeated?'Defeated · ':escaped?'Returned · ':''}${ironKey?'Iron key · ':''}${hasKey?'Vault key · ':''}${recoveredCache?'Main supplies recovered · ':''}Loot ${loot}`;
+  byId('position').textContent=`${roomName} · HP ${health}/100 · Bandages ${bandages} · ${equipment}`;
+  byId('inventory').textContent=defeated?'Defeated':escaped?'Expedition ended':recoveredCache?'Main supplies recovered':'';
   if (mode === 'eye') {
     renderFirstPerson(.985+.012*Math.sin(lightTick*.8));
     renderMap(true);
