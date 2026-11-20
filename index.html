@@ -1264,21 +1264,25 @@ const armPoses=HAND_POSES.map(loadArmPose);
 function paintArmSprite(ctx,x,y,reach,scale,light,warmth,ghost=false){
   const extended=reach>.12;
   const pose=armPoses[extended?1:0];
-  if(!pose.image) return false;
-  // Both source poses are indexed at the fist. Align the forearm toward the shoulder.
-  const [tipX,tipY,baseX,baseY]=pose.anchor;
   const extension=Math.max(0,reach);
-  const dx=(extended?428-94*extension:x+22)-x,dy=(extended?326:309)-y;
+  return drawBareArm(ctx,pose,x,y,extended?428-94*extension:x+22,extended?326:309,
+    true,light,warmth,ghost?26*scale:0);
+}
+
+function drawBareArm(ctx,pose,x,y,shoulderX,shoulderY,rightHand,light,warmth,clipRadius=0){
+  if(!pose.image) return false;
+  const [tipX,tipY,baseX,baseY]=pose.anchor;
+  const dx=shoulderX-x,dy=shoulderY-y;
   const spriteScale=Math.hypot(dx,dy)/Math.hypot(baseX-tipX,baseY-tipY);
   const opacity=ctx.globalAlpha;
   ctx.save();
-  if(ghost){
-    ctx.beginPath();ctx.arc(x,y,26*scale,0,Math.PI*2);ctx.clip();
+  if(clipRadius){
+    ctx.beginPath();ctx.arc(x,y,clipRadius,0,Math.PI*2);ctx.clip();
   }
   ctx.translate(x,y);
   ctx.rotate(Math.atan2(dy,dx));
-  // Reflect the left-hand source art into the right-hand pose before mirroring the view.
-  ctx.scale(spriteScale,-spriteScale);
+  // The original artwork is left-handed. Reflect it for the right hand.
+  ctx.scale(spriteScale,rightHand?-spriteScale:spriteScale);
   ctx.rotate(-Math.atan2(baseY-tipY,baseX-tipX));
   ctx.drawImage(pose.image,-tipX,-tipY);
   const shadow=Math.max(0,Math.min(.38,(1-light)*.67));
@@ -1635,22 +1639,16 @@ function drawWeaponModel(item,light,warmth){
       } else {
         weaponShape([[end+3,top+9],[end+21,top+10],[end+21,top+15],[end+3,top+14]],'#343137');
       }
-      ctx.save();
-      ctx.translate(-44,-14);
-      ctx.rotate(-.38+reload*.35);ctx.scale(.43,.43);
-      viewmodel.drawRealisticFist(ctx,light,warmth,false);
-      ctx.restore();
     }
-    viewmodel.drawRealisticArm(ctx,107,85,16,24,.83,light,warmth);
-    ctx.save();
-    viewmodel.poseFist(ctx,16,24,.83,-.27,light,warmth,false);
-    ctx.restore();
+    drawBareArm(ctx,armPoses[1],16,24,107,85,true,light,warmth);
   }
-  if(reload>.16){
-    viewmodel.drawRealisticArm(ctx,-113,88,-18,18+reload*8,.82,light,warmth);
-    ctx.save();
-    viewmodel.poseFist(ctx,-18,18+reload*8,.82,.35,light,warmth,false);
-    ctx.restore();
+  const longGun=item.id!=='pistol';
+  if(longGun || reloadTime>0){
+    // The same left hand moves from the forward grip to the reload pose.
+    const supportX=longGun ? -44+26*reload : -38+20*reload;
+    const supportY=longGun ? -14+40*reload : 73-47*reload;
+    const shoulderY=longGun ? 79 : 86;
+    drawBareArm(ctx,armPoses[1],supportX,supportY,-112,shoulderY,false,light,warmth);
   }
   if(shotAge<.055){
     const x=item.id==='pistol'?-40:end, y=item.id==='pistol'?-62:top;
