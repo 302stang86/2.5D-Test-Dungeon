@@ -260,7 +260,7 @@ const ARCH_LEFT=Math.floor(ARCH_HALF), ARCH_RIGHT=ARCH_WIDTH-ARCH_LEFT;
 const ROOM_CENTER=ROOM_LEFT+1;
 const EYE_HEIGHT=.5;
 const CEILING_HEIGHT=1.3;
-let room,rooms,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
+let room,rooms,roomThemes,pillars,doors,mapLayers,doorVersion,ironKey,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
 const canvas = document.querySelector('#view');
 const ctx = canvas.getContext('2d');
 const width = canvas.width, height = canvas.height, horizon = height / 2;
@@ -278,6 +278,46 @@ const locationSelect = byId('location');
 for (const tier of DUNGEON_TIERS) locationSelect.add(new Option(tier.name,tier.id));
 locationSelect.add(new Option('Rival Stronghold','rival'));
 
+// Room art IDs come from Stronghold Architect. Each style supplies both views.
+const ROOM_STYLES={
+  stone:['#625e59','#777069','bench'], hall:['#635f58','#82786c',null],
+  entrance:['#635c54','#807465','banner'], storage:['#65574a','#756351','barrels'],
+  cell:['#53565c','#6e6d72','cage'], cave:['#56564c','#666552','rubble'],
+  throne:['#665153','#786564','throne'], vault:['#665d48','#88775d','coffer'],
+  kitchen:['#705a48','#85674d','hearth'], library:['#594d49','#776459','books'],
+  armory:['#575b60','#70757b','weapons'], war:['#644e49','#80665d','desk'], crypt:['#575963','#74747d','sarcophagus'],
+  flooded:['#46606a','#63737a','pool'], arcane:['#564d65','#73647a','altar'],
+  torture:['#62514c','#7c6861','rack'], chapel:['#62616a','#807784','shrine'],
+  barracks:['#62584e','#7b6b5f','bunks'], mine:['#625c4a','#81745f','ore'],
+  research:['#5b5953','#766d60','desk'], acid:['#444851','#797167',null],
+  spikes:['#54535b','#776d6b','spikes'], gas:['#515a48','#75816b','vents'],
+  flame:['#694c43','#8b6c5c','brazier']
+};
+const ART_STYLE={
+  'ruined-storage':'storage','dark-cell':'cell','cave-room':'cave','old-throne-room':'throne',
+  'old-vault':'vault','old-kitchen':'kitchen','ruined-library':'library',armory:'armory',
+  crypt:'crypt','flooded-chamber':'flooded','alchemy-lab':'arcane','torture-chamber':'torture',
+  chapel:'chapel',barracks:'barracks','collapsed-hall':'cave','rune-sanctum':'arcane'
+};
+const TYPE_STYLE=['throne','barracks','kitchen','armory','war','library','chapel','cave',
+  'arcane','arcane','vault','torture','hall','hall','hall','hall','stone','entrance','mine','research'];
+function themeAt(x,y){
+  return roomThemes[Math.floor(y/ROOM_SPACING)]?.[Math.floor(x/ROOM_SPACING)] ?? themes.stone;
+}
+function decorateRoom(theme,x,y){
+  if(theme.id==='acid'){
+    for(const [dx,dy] of [[-2,-2],[2,-2],[0,0],[-2,2],[2,2]]){
+      actors.push({kind:'pillar',x:x+dx,y:y+dy,radius:.73,height:CEILING_HEIGHT});
+      actors.push({kind:'spores',x:x+dx+.52,y:y+dy+.53,height:.61,lift:.12});
+    }
+    for(const side of [-1,1]) actors.push({kind:'torch',x:x+side*6.08,y:y-1,lift:.38,height:.52,wallMount:true});
+  } else if(theme.prop){
+    const low=['pool','spikes','rubble','vents'].includes(theme.prop);
+    actors.push({kind:'furnishing',art:theme.prop,x:x-3.8,y:y+3.65,
+      height:low?.2:.87,radius:low?0:.33});
+  }
+}
+
 function restart() {
   site = DUNGEON_TIERS.find(tier => tier.id===locationSelect.value);
   const layout = site ? generateDungeon(site) : rival('expedition',{x:16,y:14},NAMES[ri(NAMES.length)],'');
@@ -288,12 +328,17 @@ function restart() {
   const rows=(Math.max(...layout.tiles.map(t=>t.y))-originY+1)*ROOM_SPACING;
   room=Array.from({length:rows},()=>Array(cols).fill('#'));
   rooms=new Map();
+  roomThemes=Array.from({length:Math.ceil(rows/ROOM_SPACING)},()=>[]);
   doors=new Map();
   mapLayers=new Map();
   doorVersion=0;
   ironKey=false;
   actors=[];
   const bossKey=layout.bossKey ?? roomKey(layout.tiles.find(t=>t.type===0));
+  if(site?.id==='dungeon-high' && !layout.tiles.some(t=>t.dungeonTrap==='acid')){
+    const trap=layout.tiles.find(t=>t.dungeonTrap);
+    if(trap) trap.dungeonTrap='acid';
+  }
   const entrance=layout.tiles.find(t=>t.type===17);
   const center=t=>({x:(t.x-originX)*ROOM_SPACING+ROOM_CENTER+.5,y:(t.y-originY)*ROOM_SPACING+ROOM_CENTER+.5});
   const boss=grid.get(bossKey);
@@ -303,7 +348,11 @@ function restart() {
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const hall=t.type>=12 && t.type<=15;
-    const roomName=hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
+    const trapName=t.dungeonTrap ?? (!site && t.type===16 && t.y===entrance.y-2 ? 'spikes' : null);
+    const style=trapName ?? (hall?'hall':ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
+    const theme=themes[style] ?? themes.stone;
+    roomThemes[t.y-originY][t.x-originX]=theme;
+    const roomName=theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
     rooms.set(roomKey({x:cx,y:cy}),roomName);
     const n=hall ? ARCH_LEFT : ROOM_LEFT;
     const end=hall ? ARCH_RIGHT : ROOM_RIGHT;
@@ -328,14 +377,14 @@ function restart() {
         room[rowIndex][col]='A';
         doors.set(cellKey(col,rowIndex),arch);
       }
-      actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*.32,y:arch.y-dy*1.5+Math.abs(dx)*.32,lift:.38,height:.52});
+      if(theme.id!=='acid') actors.push({kind:'torch',x:arch.x-dx*1.5+Math.abs(dy)*.32,y:arch.y-dy*1.5+Math.abs(dx)*.32,lift:.38,height:.52});
     }
 
     const defender=layout.defenders[key];
     if(key===bossKey || defender){
       const name=defender?.name ?? `Prince ${layout.prince.name}`;
       const hp=key===bossKey ? (site ? Math.round(50*site.health) : 58) : (site ? 12+4*defender.level : 18+2*defender.level);
-      actors.push({kind:key===bossKey?'boss':'enemy',roomKey:key,name,x,y:y-.37,height:.85,radius:.22,hp,maxHp:hp,round:0});
+      actors.push({kind:key===bossKey?'boss':'enemy',roomKey:key,name,x,y:y-(theme.id==='acid'?3.6:.37),height:.85,radius:.22,hp,maxHp:hp,round:0});
     }
     const resourceKinds=production[t.type] ?? [];
     const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
@@ -350,10 +399,11 @@ function restart() {
       actors.push({kind:'chest',x:x+inset,y:y+inset,height:.38,radius:.31,roomKey:key,chest,loot});
     }
     if(layout.keyRoom===key) actors.push({kind:'key',x:x-(hall?0:.92),y:y+(hall?0:.76),height:.25});
-    if(t.dungeonTrap || (!site && t.type===16 && t.y===entrance.y-2)){
-      actors.push({kind:'trap',name:t.dungeonTrap ?? 'spikes',x,y,height:.06});
+    if(trapName){
+      actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
-    if(t.type===17 || key===bossKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1)){
+    decorateRoom(theme,x,y);
+    if(theme.id!=='acid' && (t.type===17 || key===bossKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1))){
       actors.push({kind:'torch',x:x-(hall?.32:2.22),y:y-(hall?.32:1.83),lift:.38,height:.52});
     }
     if(key===bossKey && site?.id==='dungeon-medium'){
@@ -369,6 +419,7 @@ function restart() {
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
   actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
   actors.push({kind:'iron-key',x:spawn.x,y:spawn.y-.25,height:.25});
+  pillars=actors.filter(a=>a.kind==='pillar');
   torches=actors.filter(a=>a.kind==='torch');
   health=100;
   lootBag={gold:0,stone:0,food:0,rp:0};
@@ -389,7 +440,7 @@ function targetActor(kinds,range=1.65,requireFacing=true) {
     const dx=a.x-player.x,dy=a.y-player.y;
     return {a,dx,dy,d:Math.hypot(dx,dy)};
   }).filter(({a,dx,dy,d})=>d<=range && (d<.01 ||
-    ((!requireFacing || mode==='map' || (Math.cos(player.angle)*dx+Math.sin(player.angle)*dy)/d>.45) && cast(dx,dy).distance>=1)
+    ((!requireFacing || mode==='map' || (Math.cos(player.angle)*dx+Math.sin(player.angle)*dy)/d>.45) && cast(dx,dy).distance>=1 && !tracePillar(dx,dy,pillars,1))
   )).sort((a,b)=>a.d-b.d)[0]?.a;
 }
 
@@ -607,7 +658,27 @@ function stone(base, mortar) {
     for (let i=0; i<280; i++) rect(i%2?'#0002':'#fff2',(i*37)%64,(i*57+Math.floor(i/8)*5)%64,1+i%2,1);
   });
 }
-const floor = stone(60,'#282220').getContext('2d').getImageData(0,0,64,64).data;
+const themes=Object.fromEntries(Object.entries(ROOM_STYLES).map(([id,[floorColor,wallColor,prop]])=>{
+  const base=surface(64,64,rect=>{
+    rect('#242328',0,0,64,64);
+    rect(floorColor,2,2,60,60);
+    rect('#ffffff26',3,3,57,2);
+    rect('#0004',3,60,59,2);
+    for(let i=0;i<340;i++) rect(i%2?'#0002':'#fff1',3+(i*47)%57,3+(i*31+Math.floor(i/9))%57,2,2);
+    if(id==='flooded') for(const row of [9,29,49]) rect('#8ad5de52',5,row,53,2);
+    if(id==='throne'||id==='chapel') rect(id==='throne'?'#a94e5355':'#d6b77a33',7,7,50,50);
+  });
+  const wall=surface(64,64,rect=>{
+    rect('#312d2d',0,0,64,64);
+    for(let y=0;y<64;y+=16) for(let x=-16;x<64;x+=24){
+      const left=x+(y%32?12:0);
+      rect(wallColor,left+1,y+1,23,14);
+      rect('#fff3',left+1,y+1,22,1);
+      rect('#0003',left+1,y+13,22,2);
+    }
+  });
+  return [id,{id,floorColor,wallColor,prop,wall,floor:base.getContext('2d').getImageData(0,0,64,64).data}];
+}));
 const walls = {
   '#':stone(89,'#453a35'),
   D:surface(64,64,rect => {
@@ -708,7 +779,44 @@ sprites.exit=surface(28,32,rect=>{
   rect('#87482a',2,0,24,24); rect('#efcb77',4,2,20,20);
   rect('#2b3028',8,8,12,6); rect('#2b3028',8,6,4,10); rect('#87482a',13,24,3,8);
 });
+const PROP_ART={
+  bench:['#6f4f37','#a67b56',[[2,12,28,5],[5,17,4,10],[23,17,4,10]]],
+  banner:['#672d38','#d6aa63',[[7,3,18,23],[3,2,26,2],[13,21,6,9]]],
+  barrels:['#795136','#a67d55',[[2,12,12,18],[15,7,15,23],[4,17,25,2],[4,24,25,2]]],
+  cage:['#4b4e56','#ada8a2',[[2,5,28,3],[2,28,28,3],[3,7,2,21],[9,7,2,21],[15,7,2,21],[21,7,2,21],[27,7,2,21]]],
+  rubble:['#51574e','#888c77',[[2,21,9,9],[10,16,11,14],[21,20,9,10],[13,11,5,7]]],
+  throne:['#772f3b','#bc985e',[[9,2,14,22],[7,20,18,7],[4,17,4,10],[24,17,4,10],[6,27,5,4],[21,27,5,4]]],
+  coffer:['#56442d','#bf9b59',[[3,11,26,17],[5,8,22,6],[6,24,20,3],[14,15,4,5]]],
+  hearth:['#736761','#e97f41',[[3,8,26,22],[7,14,18,14],[12,18,9,9],[15,14,5,11]]],
+  books:['#5c4132','#be9468',[[3,4,26,26],[5,11,22,2],[5,20,22,2],[7,5,4,6],[14,13,3,7],[20,22,5,7]]],
+  weapons:['#5a514a','#c3b7a2',[[3,8,26,3],[3,26,26,3],[6,4,2,22],[15,7,2,19],[24,3,2,23],[4,17,23,2]]],
+  sarcophagus:['#676471','#9e9c9a',[[6,10,20,20],[3,17,26,11],[11,13,10,3],[14,14,4,11]]],
+  pool:['#2b525f','#76b4b7',[[2,20,28,9],[5,17,22,13],[7,21,10,2],[19,25,8,2]]],
+  altar:['#645775','#c398d5',[[3,19,26,4],[7,23,18,7],[11,13,10,6],[13,7,6,7]]],
+  rack:['#694535','#a89075',[[4,12,24,6],[6,18,4,12],[22,18,4,12],[5,6,3,6],[24,6,3,6]]],
+  shrine:['#6e6573','#debf7c',[[5,21,22,8],[12,9,8,13],[15,4,2,17],[10,8,12,2]]],
+  bunks:['#694d41','#b79c74',[[3,9,26,5],[3,20,26,5],[5,6,3,24],[24,6,3,24],[8,7,15,3],[8,18,15,3]]],
+  ore:['#665946','#d7ae55',[[3,19,26,11],[8,13,17,13],[10,15,4,4],[20,19,5,4],[15,24,4,3]]],
+  desk:['#674f39','#c4b393',[[3,16,26,6],[6,22,4,8],[22,22,4,8],[9,12,13,5]]],
+  spikes:['#4d4f55','#a0a5b1',[[2,24,28,6],[5,18,3,7],[11,16,3,9],[17,18,3,7],[23,16,3,9]]],
+  vents:['#37463b','#7dab67',[[4,20,24,10],[7,22,3,5],[14,22,3,5],[21,22,3,5]]],
+  brazier:['#545057','#ff9c52',[[8,20,16,5],[13,24,6,6],[11,14,10,6],[14,7,5,9]]]
+};
+const roomProps=Object.fromEntries(Object.entries(PROP_ART).map(([id,[base,trim,shapes]])=>[id,surface(32,32,rect=>{
+  shapes.forEach(([x,y,w,h],i)=>{
+    rect(i<2?base:trim,x,y,w,h);
+    rect('#ffffff25',x,y,w,1);
+  });
+})]));
+sprites.spores=surface(48,48,rect=>{
+  for(let i=0;i<14;i++){
+    const x=3+(i*17)%42,y=3+(i*11)%42;
+    rect(i%3?'#8ba4579c':'#d4eaa0bb',x,y,i%4?1:2,i%4?1:2);
+  }
+});
+
 function spriteFor(actor) {
+  if(actor.kind==='furnishing') return roomProps[actor.art];
   return sprites[actor.kind==='chest' && actor.done ? 'opened' : actor.kind];
 }
 function visibleActor(actor) {
@@ -725,6 +833,7 @@ function renderPlanes(fx,fy,rx,ry) {
     let worldY = player.y+distance*fy+(0.5-width/2)*step*ry;
     const light = Math.max(.17, 1/(1+distance*.27))*(isFloor?1:.65);
     for (let x=0; x<width; x++) {
+      const floor=themeAt(worldX,worldY).floor;
       const sample = (((Math.floor(worldY*64)&63)*64)+(Math.floor(worldX*64)&63))*4;
       const index = (y*width+x)*4;
       const checker = (Math.floor(worldX)+Math.floor(worldY))&1 ? .85 : 1;
@@ -738,18 +847,59 @@ function renderPlanes(fx,fy,rx,ry) {
   }
   ctx.putImageData(planes,0,0);
 }
+// Intersect the horizontal ray with the round shaft before the distant wall.
+function tracePillar(dx,dy,candidates,limit){
+  const rayLength=dx*dx+dy*dy;
+  let hit;
+  for(const p of candidates){
+    const x=p.x-player.x,y=p.y-player.y;
+    const radius=p.radius*.84, forward=x*dx+y*dy;
+    const discriminant=forward*forward-rayLength*(x*x+y*y-radius*radius);
+    if(forward<=0 || discriminant<0) continue;
+    const distance=(forward-Math.sqrt(discriminant))/rayLength;
+    if(distance<=0 || distance>=limit) continue;
+    limit=distance;
+    const normalX=(distance*dx-x)/radius,normalY=(distance*dy-y)/radius;
+    hit={distance,normalX,normalY};
+  }
+  return hit;
+}
+function paintPillar(column,top,height,{normalX,normalY}){
+  const light=Math.round(53+Math.max(0,(normalX-normalY)*.65)*67);
+  const band=Math.floor((Math.atan2(normalY,normalX)+Math.PI)*7)%2;
+  ctx.fillStyle=`rgb(${light+band*5},${light+band*7},${light-8})`;
+  ctx.fillRect(column,top,1,height);
+  for(const [start,thickness] of [[.03,.09],[.77,.035],[.87,.055],[.95,.05]]){
+    ctx.fillStyle='#93917e';
+    ctx.fillRect(column,top+height*start,1,height*thickness);
+    ctx.fillStyle='#454438';
+    ctx.fillRect(column,top+height*(start+thickness*.66),1,height*thickness*.34);
+  }
+  if(band) {
+    ctx.fillStyle='#76884d99';
+    ctx.fillRect(column,top+height*(.7+normalY*.07),1,height*.12);
+  }
+}
+
 function renderFirstPerson(flicker) {
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
   renderPlanes(fx,fy,rx,ry);
+  const nearbyPillars=pillars.filter(p=>Math.abs(p.x-player.x)<24 && Math.abs(p.y-player.y)<24);
   const openings=Array.from({length:width},()=>[]);
   for (let x=0; x<width; x++) {
     const camera = (x+0.5-width/2)/focal;
-    const hit = cast(fx+rx*camera,fy+ry*camera,openings[x]);
-    const d=Math.max(.01,hit.distance), scale=focal/d;
+    const dx=fx+rx*camera,dy=fy+ry*camera;
+    const hit=cast(dx,dy,openings[x]);
+    const column=tracePillar(dx,dy,nearbyPillars,hit.distance);
+    const d=Math.max(.01,column?.distance ?? hit.distance), scale=focal/d;
     const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
     depth[x] = d;
-    const cell=tile(hit.x,hit.y), door=cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
-    ctx.drawImage(door ? walls[door.status==='locked'?'G':'D'] : (walls[cell] ?? walls['#']),Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    const cell=tile(hit.x,hit.y), door=!column && cell==='A' ? doors.get(cellKey(hit.x,hit.y)) : null;
+    if(column) paintPillar(x,top,h,column);
+    else {
+      const wall=themeAt(player.x+dx*Math.max(0,d-.02),player.y+dy*Math.max(0,d-.02)).wall;
+      ctx.drawImage(door ? walls[door.status==='locked'?'G':'D'] : wall,Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    }
     if(door){
       const lateral=door.axis==='x' ? player.y+(fy+ry*camera)*d-door.y : player.x+(fx+rx*camera)*d-door.x;
       paintArch(x,d,lateral);
@@ -764,12 +914,13 @@ function renderFirstPerson(flicker) {
     const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
     ctx.fillStyle = `rgba(13,10,11,${Math.max(0,1-light-torchLight*flicker)})`;
     ctx.fillRect(x,top,1,h);
+    openings[x]=openings[x].filter(opening=>opening.distance<d);
     for(const opening of openings[x].reverse()){
       opening.band=paintArch(x,opening.distance,opening.lateral,opening.arch.status==='open');
     }
   }
 
-  const visible = actors.filter(visibleActor).map(a => {
+  const visible = actors.filter(a=>a.kind!=='pillar' && visibleActor(a)).map(a => {
     const dx=a.x-player.x, dy=a.y-player.y;
     return { a, d:dx*fx+dy*fy, lateral:dx*rx+dy*ry };
   }).filter(s => s.d > .08).sort((a,b) => b.d-a.d);
@@ -777,7 +928,8 @@ function renderFirstPerson(flicker) {
     const sprite = spriteFor(a);
     const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
-    const top = horizon+(EYE_HEIGHT-(a.lift ?? 0))*scale-h;
+    const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
+    const top = horizon+(EYE_HEIGHT-lift)*scale-h;
     if (a.kind === 'torch') drawTorchGlow(width/2+lateral*scale,top+h*.3,Math.max(4,h*.95),d,flicker);
     ctx.globalAlpha = Math.max(.6,1-d*.032);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
@@ -845,7 +997,7 @@ function renderMap(mini=false) {
         if(cell==='#') return;
         const door=cell==='A' ? doors.get(cellKey(x,y)) : null;
         const color=door ? ({bare:'#d5bc97',open:'#ba9865',closed:'#a96838',locked:'#d45545'})[door.status] :
-          ({'.':'#6c5747',W:'#8b8378'})[cell];
+          (cell==='.' ? themeAt(x,y).floorColor : '#8b8378');
         rect(color,left+x*size,top+y*size,Math.ceil(size),Math.ceil(size));
       }));
     });
@@ -854,6 +1006,31 @@ function renderMap(mini=false) {
   }
   ctx.drawImage(layer.image,0,0);
   for (const a of actors.filter(visibleActor)) {
+    if(a.kind==='pillar'){
+      const px=left+a.x*size,py=top+a.y*size,r=a.radius*size;
+      ctx.fillStyle='#8d927c';
+      ctx.beginPath();ctx.arc(px,py,r,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#363e32';
+      ctx.beginPath();ctx.arc(px,py,r*.52,0,Math.PI*2);ctx.fill();
+      continue;
+    }
+    if(a.wallMount && !mini){
+      ctx.fillStyle='#ef9b3a';
+      ctx.beginPath();ctx.arc(left+a.x*size,top+a.y*size,Math.max(.8,size*.18),0,Math.PI*2);ctx.fill();
+      continue;
+    }
+    if(a.kind==='spores'){
+      if(!mini){
+        ctx.fillStyle='#9fba68';
+        for(let i=0;i<4;i++) ctx.fillRect(left+(a.x+(i%2)*.22)*size,top+(a.y+(i%3)*.17)*size,1,1);
+      }
+      continue;
+    }
+    if(a.kind==='furnishing'){
+      const prop=spriteFor(a), side=Math.max(2,size*.9);
+      ctx.drawImage(prop,left+a.x*size-side/2,top+a.y*size-side/2,side,side);
+      continue;
+    }
     if (mini || size<12) {
       if (a.kind!=='torch' && a.kind!=='trap' && a.kind!=='ward') {
         ctx.fillStyle=({boss:'#e879cb',enemy:'#f9745b',chest:'#edaa52',key:'#f9e58a','iron-key':'#f9e58a',exit:'#84cc91'})[a.kind];
