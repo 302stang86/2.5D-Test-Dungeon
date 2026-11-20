@@ -511,7 +511,17 @@ function updateWeapon(dt){
   turn++;
 }
 
+const WALL_TYPES={
+  full_stone:{span:1,height:3,thickness:.4},
+  arched_entry:{span:3,height:3,thickness:.4,archWidth:1.8,archHeight:2.2}
+};
 const FIELD_ROOM = {"doorways":[{"x":6,"y":0},{"x":12,"y":6},{"x":0,"y":6},{"x":6,"y":12}],"props":[{"type":"pillar","x":1,"y":1,"width":1,"height":1,"cover":"full"},{"type":"parapet","x":2,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":4,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":1,"y":2,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":1,"y":6,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":4,"y":6,"width":1,"height":2,"cover":"low"},{"type":"bench","x":5,"y":6,"width":2,"height":1,"cover":"low"},{"type":"bench","x":4,"y":2,"width":2,"height":1,"cover":"low"},{"type":"armor-rack","x":9,"y":0,"width":1,"height":1,"cover":"full"},{"type":"crate-stack","x":10,"y":4,"width":1,"height":1,"cover":"full"}]};
+// Positions use the editor's zero-based tiles. The arch is anchored at its center.
+FIELD_ROOM.props.push(
+  {type:'full_stone',x:6,y:3,width:1,height:1,cover:'full'},
+  {type:'arched_entry',x:8,y:3,width:3,height:1,cover:'full'},
+  {type:'full_stone',x:10,y:3,width:1,height:1,cover:'full'}
+);
 function fieldRoomLayout(){
   const center={x:1,y:1,type:17,rot:0,ports:[]};
   const tiles=[center];
@@ -526,7 +536,17 @@ function fieldRoomLayout(){
 }
 function placeFieldProps(left,top){
   for(const prop of FIELD_ROOM.props){
-    const x=left+prop.x+prop.width/2,y=top+prop.y+prop.height/2;
+    const centered=prop.type==='arched_entry';
+    const x=left+prop.x+(centered?.5:prop.width/2),y=top+prop.y+(centered?.5:prop.height/2);
+    const wall=WALL_TYPES[prop.type];
+    if(wall){
+      const parts=fieldPropParts(prop,x,y);
+      const vertical=prop.height>prop.width;
+      actors.push({kind:'furnishing',art:prop.type,x,y,height:CEILING_HEIGHT,
+        halfX:(vertical?wall.thickness:wall.span)/2,halfY:(vertical?wall.span:wall.thickness)/2,
+        parts,wallParts:parts.filter(part=>part.bottom===0)});
+      continue;
+    }
     if(prop.type==='pillar'){
       actors.push({kind:'pillar',x,y,radius:.5,height:CEILING_HEIGHT});
       continue;
@@ -544,6 +564,22 @@ function fieldPropParts(prop,x,y){
     halfX:(vertical?depth:width)/2,halfY:(vertical?width:depth)/2,
     bottom,height,color,material
   });
+  const wall=WALL_TYPES[prop.type];
+  if(wall){
+    const stone=(along,width,bottom)=>box(along,0,width,wall.thickness,
+      bottom*CEILING_HEIGHT/wall.height,CEILING_HEIGHT,[111,112,114],'masonry');
+    if(!wall.archWidth) return [stone(0,wall.span,0)];
+    const radius=wall.archWidth/2, spring=wall.archHeight-radius;
+    const support=(wall.span-wall.archWidth)/2, steps=24, width=wall.archWidth/steps;
+    return [
+      stone(-radius-support/2,support,0),
+      stone(radius+support/2,support,0),
+      ...Array.from({length:steps},(_,i)=>{
+        const u=-radius+(i+.5)*width;
+        return stone(u,width,spring+Math.sqrt(radius*radius-u*u));
+      })
+    ];
+  }
   if(prop.type==='parapet'){
     return [box(0,0,1.92,.92,0,.38,[119,110,92],'stone')];
   }
@@ -680,7 +716,7 @@ function restart() {
   lastRender=undefined;
   byId('objective').textContent=customTest ? 'Custom Room Field Test · Test cover and movement in the starting room.' : fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
-  if(customTest) tell('Four archways lead to adjacent test rooms. Weapons are in the north room.');
+  if(customTest) tell('Try the new stone arch north of the starting room center. Weapons are in the next room north.');
   else if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
   else tell(mobile.matches?'Use Interact to open crates and pick up weapons. Drag the view to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
@@ -760,6 +796,7 @@ function solid(x,y) {
   return cell === '#' || cell === 'W' || cell === 'B';
 }
 function blocksActor(a,x,y,r){
+  if(a.wallParts) return a.wallParts.some(part=>blocksActor(part,x,y,r));
   if(a.halfX!==undefined){
     const dx=Math.max(0,Math.abs(a.x-x)-a.halfX),dy=Math.max(0,Math.abs(a.y-y)-a.halfY);
     return dx*dx+dy*dy<r*r;
@@ -1519,8 +1556,10 @@ function traceCover(dx,dy,prop,origin){
 function coverLimit(dx,dy,limit,origin,height){
   for(const prop of fieldCover){
     if(prop.height<height) continue;
-    const hit=traceCover(dx,dy,prop,origin);
-    if(hit) limit=Math.min(limit,hit.near);
+    for(const part of prop.wallParts??[prop]){
+      const hit=traceCover(dx,dy,part,origin);
+      if(hit) limit=Math.min(limit,hit.near);
+    }
   }
   return limit;
 }
@@ -1573,6 +1612,22 @@ function paintFieldProp(column,dx,dy,part,hit,wallDistance){
   ctx.fillRect(column,top,1,frontTop-top);
   ctx.fillStyle='#302821';
   ctx.fillRect(column,frontBottom,1,bottom-frontBottom);
+  if(part.material==='masonry'){
+    const mortar='#414246', courseHeight=.19, pixel=Math.max(1,nearScale*.018);
+    for(let course=0;course*courseHeight<CEILING_HEIGHT;course++){
+      const line=horizon+(eyeHeight-course*courseHeight)*nearScale;
+      if(line>=frontTop && line<frontBottom){
+        ctx.fillStyle=mortar;
+        ctx.fillRect(column,line,1,Math.min(pixel,frontBottom-line));
+      }
+      const joint=((coordinate+(course%2)*.24)% .48+.48)% .48;
+      if(joint<.022){
+        const edge=Math.max(frontTop,line-nearScale*courseHeight);
+        ctx.fillStyle=mortar;
+        ctx.fillRect(column,edge,1,Math.max(0,Math.min(frontBottom,line)-edge));
+      }
+    }
+  }
   if(part.material==='stone'){
     const seam=frontTop+(frontBottom-frontTop)*.54;
     ctx.fillRect(column,seam,1,Math.max(1,nearScale*.015));
@@ -2224,7 +2279,9 @@ function renderMap(mini=false) {
     if(a.kind==='furnishing'){
       if(a.halfX!==undefined){
         ctx.fillStyle=a.art==='parapet'?'#847b69':a.height<.5?'#a6845e':'#a59376';
-        ctx.fillRect(left+(a.x-a.halfX)*size,top+(a.y-a.halfY)*size,a.halfX*2*size,a.halfY*2*size);
+        for(const part of a.wallParts??[a]){
+          ctx.fillRect(left+(part.x-part.halfX)*size,top+(part.y-part.halfY)*size,part.halfX*2*size,part.halfY*2*size);
+        }
       }else{
         const prop=spriteFor(a), side=Math.max(2,size*.9);
         ctx.drawImage(prop,left+a.x*size-side/2,top+a.y*size-side/2,side,side);
