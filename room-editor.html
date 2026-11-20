@@ -67,6 +67,18 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
 .edit-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
 .cell .prop-thumb[data-arch=true] { width:calc(300% + 8px); left:calc(-100% - 4px); }
 .cell .prop-thumb[data-arch=true][data-vertical=true] { transform-origin:center; transform:rotate(90deg); }
+#room-preview { grid-column:1 / -1; }
+@media(min-width:1180px) {
+ main:has(#room-preview:not([hidden])) { width:min(1640px,100%); }
+ .workspace:has(#room-preview:not([hidden])) { grid-template-columns:220px minmax(0,1fr) minmax(0,1fr); }
+ #room-preview { grid-column:auto; }
+}
+#room-preview[hidden], #preview-controls[hidden] { display:none; }
+#room-preview h2 { font-size:1rem; margin:0 0 8px; }
+#preview-stage { height:clamp(265px,55vh,620px); overflow:hidden; border-radius:7px; background:#15120f; touch-action:none; cursor:grab; }
+#preview-stage:active { cursor:grabbing; }
+#preview-stage canvas { width:100%; height:100%; display:block; }
+#preview-status { padding:12px; }
 </style>
 </head>
 <body>
@@ -96,11 +108,23 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
 <button id="save">Save JSON</button>
 <button id="open">Open JSON</button>
 <button id="clear" disabled>Clear room</button>
+<button id="toggle-preview" aria-controls="room-preview" aria-expanded="false">Show 3D preview</button>
 <input id="file" type="file" accept=".json,application/json" hidden>
 </div>
 <div class="board" tabindex="0" aria-label="Scrollable 13 by 13 room">
 <div id="grid" role="group" aria-label="Room tiles"></div>
 </div>
+</section>
+<section class="map" id="room-preview" aria-labelledby="preview-title" hidden>
+<h2 id="preview-title">3D Room Preview</h2>
+<div class="toolbar" id="preview-controls" hidden>
+<button id="preview-left" aria-label="Rotate view left">↶</button>
+<button id="preview-right" aria-label="Rotate view right">↷</button>
+<button id="preview-out">Zoom out</button>
+<button id="preview-in">Zoom in</button>
+<button id="preview-reset">Reset view</button>
+</div>
+<div id="preview-stage"><p id="preview-status" role="status">Loading 3D preview…</p></div>
 </section>
 </div>
 </main>
@@ -328,6 +352,7 @@ function render(){
   undo.disabled=!history.length;
   clear.disabled=!items.length&&!doors.length;
   updateTool();
+  updateRoomPreview();
 }
 function remember(){
   history.push({name:name.value,items,doors});
@@ -485,6 +510,226 @@ file.onchange=async()=>{
     say('Room opened. Undo restores the previous room.');
     persist();
   }catch(error){say(error instanceof SyntaxError?'This file is not valid JSON.':error.message);}
+};
+const previewPanel=byId('room-preview');
+const previewMount=byId('preview-stage');
+const previewStatus=byId('preview-status');
+let updateRoomPreview=()=>{};
+async function startRoomPreview(){
+  try{
+    const THREE=await import('https://unpkg.com/three@0.169.0/build/three.module.js');
+    const scene=new THREE.Scene();
+    scene.background=new THREE.Color('#15120f');
+    const renderer=new THREE.WebGLRenderer({antialias:true, powerPreference:'low-power'});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+    renderer.shadowMap.enabled=true;
+    renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+    renderer.toneMapping=THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure=1.1;
+    previewMount.append(renderer.domElement);
+    renderer.domElement.setAttribute('aria-hidden','true');
+    const camera=new THREE.OrthographicCamera(-10,10,10,-10,.1,100);
+    scene.add(new THREE.HemisphereLight(0x9daecb,0x33241b,1.25));
+    const keyLight=new THREE.DirectionalLight(0xffe4c0,2.1);
+    keyLight.position.set(15,22,9);
+    keyLight.castShadow=true;
+    keyLight.shadow.mapSize.set(1024,1024);
+    Object.assign(keyLight.shadow.camera,{left:-14,right:14,top:14,bottom:-14,near:1,far:50});
+    keyLight.shadow.normalBias=.025;
+    scene.add(keyLight);
+    const center=size/2;
+    const content=new THREE.Group();
+    scene.add(content);
+    const materials={};
+    function material(color){
+      return materials[color]??=new THREE.MeshStandardMaterial({color,roughness:.9});
+    }
+    function mesh(group,geometry,surface,x,y,z){
+      const object=new THREE.Mesh(geometry,surface);
+      object.position.set(x,y,z);
+      object.castShadow=true;
+      object.receiveShadow=true;
+      group.add(object);
+      return object;
+    }
+    const box=(group,w,h,d,color,x=0,y=h/2,z=0)=>mesh(group,new THREE.BoxGeometry(w,h,d),material(color),x,y,z);
+    const cylinder=(group,top,bottom,h,color,x=0,y=h/2,z=0)=>mesh(group,new THREE.CylinderGeometry(top,bottom,h,12),material(color),x,y,z);
+    const floor=box(scene,size,.16,size,0x594a3d,0,-.08,0);
+    floor.castShadow=false;
+    const gridLines=new THREE.GridHelper(size,size,0x826b51,0x6b5b4a);
+    gridLines.position.y=.008;
+    scene.add(gridLines);
+    const masonry=document.createElement('canvas');
+    masonry.width=masonry.height=128;
+    const paint=masonry.getContext('2d');
+    paint.fillStyle='#37383a';
+    paint.fillRect(0,0,128,128);
+    for(let row=0;row<4;row++) for(let col=-1;col<4;col++){
+      const value=113+((col+1)*11+row*17)%28;
+      paint.fillStyle='rgb('+[value,value,value-3].join(',')+')';
+      paint.fillRect(col*32+(row%2)*16,row*32,30,29);
+    }
+    const stoneTexture=new THREE.CanvasTexture(masonry);
+    stoneTexture.colorSpace=THREE.SRGBColorSpace;
+    stoneTexture.wrapS=stoneTexture.wrapT=THREE.RepeatWrapping;
+    const stoneMat=new THREE.MeshStandardMaterial({map:stoneTexture,roughness:.91});
+    function archGeometry(wall){
+      const half=wall.span/2,r=wall.archWidth/2,spring=wall.archHeight-r;
+      const shape=new THREE.Shape();
+      shape.moveTo(-half,0);
+      shape.lineTo(-r,0);
+      shape.lineTo(-r,spring);
+      for(let step=1;step<=24;step++){
+        const angle=Math.PI*(1-step/24);
+        shape.lineTo(Math.cos(angle)*r,spring+Math.sin(angle)*r);
+      }
+      shape.lineTo(r,0);
+      shape.lineTo(half,0);
+      shape.lineTo(half,wall.height);
+      shape.lineTo(-half,wall.height);
+      shape.closePath();
+      const geometry=new THREE.ExtrudeGeometry(shape,{depth:wall.thickness,bevelEnabled:false});
+      geometry.translate(0,0,-wall.thickness/2);
+      return geometry;
+    }
+    function addProp(item){
+      const group=new THREE.Group();
+      const [, ,span,kind]=props[item.type];
+      const offset=item.type==='arched_entry'?0:(span-1)/2;
+      group.position.set(item.x+.5-center+(item.rotation===0?offset:0),0,
+        item.y+.5-center+(item.rotation===90?offset:0));
+      group.rotation.y=-item.rotation*Math.PI/180;
+      const wall=WALL_TYPES[item.type];
+      const stone=0x8b8171,wood=0x865638,iron=0x52575e;
+      if(item.type==='arched_entry'){
+        mesh(group,archGeometry(wall),stoneMat,0,0,0);
+      }else if(wall){
+        mesh(group,new THREE.BoxGeometry(wall.span,wall.height,wall.thickness),stoneMat,0,wall.height/2,0);
+      }else if(item.type==='pillar'||item.type==='broken-column'||item.type==='pedestal'){
+        const height=item.type==='pillar'?2.9:item.type==='pedestal'?.95:.65;
+        cylinder(group,.25,.27,height,stone);
+        box(group,.68,.14,.65,stone,0,.07);
+        if(item.type!=='broken-column') box(group,.65,.15,.62,stone,0,height-.075);
+      }else if(item.type==='bench'){
+        box(group,1.72,.13,.63,stone,0,.71);
+        for(const x of [-.65,.65]) box(group,.25,.65,.51,stone,x,.325);
+      }else if(item.type==='parapet'||item.type==='altar'){
+        box(group,1.84,.72,.68,stone);
+        box(group,1.94,.13,.75,0xa79a84,0,.75);
+      }else if(item.type.includes('barrel')){
+        const cluster=item.type==='barrel-cluster'?[-.62,0,.62]:[0];
+        for(const x of cluster){
+          cylinder(group,.285,.29,.74,wood,x);
+          for(const y of [.19,.55]) cylinder(group,.3,.3,.065,iron,x,y);
+        }
+      }else if(['cauldron','unlit-brazier','lit-brazier'].includes(item.type)){
+        cylinder(group,.36,.22,.32,iron,0,.54);
+        cylinder(group,.10,.16,.37,iron,0,.18);
+        if(item.type==='lit-brazier'){
+          mesh(group,new THREE.ConeGeometry(.19,.42,7),new THREE.MeshBasicMaterial({color:0xff8c33}),0,.86,0);
+          const light=new THREE.PointLight(0xff9c4a,7,4);
+          light.position.y=1;
+          group.add(light);
+        }
+      }else if(kind==='soft'){
+        box(group,span*.77,1.85,.045,item.type==='banner'?0x37517a:0x823e48,0,1.67);
+        box(group,span*.91,.07,.07,wood,0,2.63);
+      }else if(item.type==='crate-stack'){
+        box(group,.78,.54,.75,wood);
+        box(group,.58,.52,.58,0xa06d47,.05,.80,0);
+      }else if(item.type==='chest'||item.type==='trunk'){
+        box(group,.80,.47,.59,wood);
+        const lid=box(group,.8,.08,.60,wood,0,item.type==='chest'?.71:.48,item.type==='chest'?-.22:0);
+        if(item.type==='chest') lid.rotation.x=-1.14;
+        box(group,.13,.13,.035,0xc29858,0,.30,.31);
+      }else{
+        const metal=/armor|maiden|minecart/.test(item.type);
+        const masonry=/sarcophagus|rubble|stalagmite/.test(item.type);
+        const height=kind==='full'?1.73:.68;
+        box(group,span*.76,height,.68,masonry?stone:metal?iron:wood);
+        box(group,span*.80,.10,.72,masonry?0xa09583:metal?0x777c83:0xa06d47,0,height-.05);
+      }
+      content.add(group);
+    }
+    let angle=Math.PI/4,pitch=.78,zoom=1;
+    let lastItems,lastDoors,drawPending=false;
+    function draw(){
+      if(drawPending||previewPanel.hidden) return;
+      drawPending=true;
+      requestAnimationFrame(()=>{
+        drawPending=false;
+        if(previewPanel.hidden) return;
+        const width=previewMount.clientWidth,height=previewMount.clientHeight;
+        if(!width||!height) return;
+        const aspect=width/height, frame=9.6/zoom;
+        camera.left=-frame*Math.max(1,aspect);
+        camera.right=-camera.left;
+        camera.top=frame/Math.min(1,aspect);
+        camera.bottom=-camera.top;
+        camera.updateProjectionMatrix();
+        camera.position.set(27*Math.sin(angle)*Math.cos(pitch),27*Math.sin(pitch),27*Math.cos(angle)*Math.cos(pitch));
+        camera.lookAt(0,.5,0);
+        renderer.setSize(width,height,false);
+        renderer.render(scene,camera);
+      });
+    }
+    updateRoomPreview=()=>{
+      if(lastItems!==items||lastDoors!==doors){
+        for(const group of [...content.children]){
+          group.traverse(object=>{
+            object.geometry?.dispose();
+            if(object.material?.isMeshBasicMaterial) object.material.dispose();
+          });
+          content.remove(group);
+        }
+        for(const item of items) addProp(item);
+        for(const door of doors) box(content,.87,.025,.87,0x639474,door.x+.5-center,.014,door.y+.5-center);
+        lastItems=items;
+        lastDoors=doors;
+      }
+      draw();
+    };
+    let orbit;
+    previewMount.onpointerdown=event=>{
+      if(orbit||event.button!==0) return;
+      orbit={id:event.pointerId,x:event.clientX,y:event.clientY};
+      previewMount.setPointerCapture(event.pointerId);
+    };
+    previewMount.onpointermove=event=>{
+      if(orbit?.id!==event.pointerId) return;
+      angle-=(event.clientX-orbit.x)*.009;
+      pitch=Math.max(.18,Math.min(1.5,pitch+(event.clientY-orbit.y)*.007));
+      orbit.x=event.clientX;
+      orbit.y=event.clientY;
+      draw();
+    };
+    previewMount.onlostpointercapture=()=>{orbit=null;};
+    byId('preview-left').onclick=()=>{angle-=Math.PI/6;draw();};
+    byId('preview-right').onclick=()=>{angle+=Math.PI/6;draw();};
+    byId('preview-in').onclick=()=>{zoom=Math.min(2.5,zoom+.2);draw();};
+    byId('preview-out').onclick=()=>{zoom=Math.max(.6,zoom-.2);draw();};
+    byId('preview-reset').onclick=()=>{angle=Math.PI/4;pitch=.78;zoom=1;draw();};
+    new ResizeObserver(draw).observe(previewMount);
+    previewStatus.hidden=true;
+    byId('preview-controls').hidden=false;
+    updateRoomPreview();
+  }catch{
+    previewStarted=false;
+    previewStatus.textContent='3D preview unavailable. It requires an internet connection and WebGL.';
+  }
+}
+let previewStarted=false;
+byId('toggle-preview').onclick=()=>{
+  previewPanel.hidden=!previewPanel.hidden;
+  const button=byId('toggle-preview');
+  button.setAttribute('aria-expanded',String(!previewPanel.hidden));
+  button.textContent=previewPanel.hidden?'Show 3D preview':'Hide 3D preview';
+  if(previewPanel.hidden) return;
+  if(!previewStarted){
+    previewStarted=true;
+    previewStatus.textContent='Loading 3D preview…';
+    startRoomPreview();
+  }else updateRoomPreview();
 };
 updateTool();
 render();
