@@ -351,6 +351,7 @@ const ROOM_CENTER=ROOM_LEFT+1;
 const STANDING_EYE_HEIGHT=.5, CROUCHED_EYE_HEIGHT=.29;
 let eyeHeight=STANDING_EYE_HEIGHT;
 const CEILING_HEIGHT=1.3;
+let fieldCover=[];
 let room,rooms,roomThemes,pillars,arches,mapLayers,actors,ceilingLights,site,health,bandages,defeated,recoveredCache,turn;
 const canvas = document.querySelector('#view');
 const desktop=globalThis.matchMedia?.('(min-width: 900px) and (pointer: fine)').matches;
@@ -380,6 +381,7 @@ const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
 for (const tier of DUNGEON_TIERS) locationSelect.add(new Option(tier.name,tier.id));
 locationSelect.add(new Option('Rival Stronghold','rival'));
+locationSelect.add(new Option('Custom Room Field Test','room-test'));
 locationSelect.add(new Option('Acid Chamber Field Test','acid-test'));
 menuLocation.replaceChildren(...Array.from(locationSelect.options, option=>option.cloneNode(true)));
 const finishSelect=byId('acid-finish');
@@ -487,7 +489,7 @@ function fireWeapon(){
   item.ammo--;
   shotTime=WEAPONS[item.id].interval;
   const dx=Math.cos(player.angle),dy=Math.sin(player.angle),wall=cast(dx,dy);
-  const obstacle=tracePillar(dx,dy,pillars,wall.distance)?.distance ?? wall.distance;
+  const obstacle=coverLimit(dx,dy,tracePillar(dx,dy,pillars,wall.distance)?.distance ?? wall.distance,player,eyeHeight);
   const distance=hitGuard(dx,dy,obstacle,GUARD_DAMAGE[item.id])?.distance ?? obstacle;
   shotImpact={x:player.x+dx*distance,y:player.y+dy*distance,age:0};
   turn++;
@@ -509,12 +511,39 @@ function updateWeapon(dt){
   turn++;
 }
 
+const FIELD_ROOM = {"doorways":[{"x":6,"y":0},{"x":12,"y":6},{"x":0,"y":6},{"x":6,"y":12}],"props":[{"type":"pillar","x":1,"y":1,"width":1,"height":1,"cover":"full"},{"type":"parapet","x":2,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":4,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":1,"y":2,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":1,"y":6,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":4,"y":6,"width":1,"height":2,"cover":"low"},{"type":"bench","x":5,"y":6,"width":2,"height":1,"cover":"low"},{"type":"bench","x":4,"y":2,"width":2,"height":1,"cover":"low"},{"type":"armor-rack","x":9,"y":0,"width":1,"height":1,"cover":"full"},{"type":"crate-stack","x":10,"y":4,"width":1,"height":1,"cover":"full"}]};
+function fieldRoomLayout(){
+  const center={x:1,y:1,type:17,rot:0,ports:[]};
+  const tiles=[center];
+  const types=[7,1,16,3];
+  for(const {x,y} of FIELD_ROOM.doorways){
+    const direction=y===0?0:x===ROOM_SIZE-1?1:y===ROOM_SIZE-1?2:3;
+    const [dx,dy]=DIRS[direction];
+    center.ports.push(direction);
+    tiles.push({x:center.x+dx,y:center.y+dy,type:types[direction],rot:0,ports:[(direction+2)%4]});
+  }
+  return {tiles,rulingName:'Custom Room Field Test',vaultKey:roomKey(tiles[1])};
+}
+function placeFieldProps(left,top){
+  for(const prop of FIELD_ROOM.props){
+    const x=left+prop.x+prop.width/2,y=top+prop.y+prop.height/2;
+    if(prop.type==='pillar'){
+      actors.push({kind:'pillar',x,y,radius:.5,height:CEILING_HEIGHT});
+      continue;
+    }
+    const parapet=prop.type==='parapet';
+    actors.push({kind:'furnishing',art:prop.type,x,y,height:prop.cover==='low'?.38:.88,
+      halfX:prop.width/2-(parapet?.04:.14),halfY:prop.height/2-(parapet?.04:.14),
+      sceneWidth:Math.max(prop.width,prop.height)*.88,parapet});
+  }
+}
 function restart() {
   clearInput();
   const fieldTest=locationSelect.value==='acid-test';
+  const customTest=locationSelect.value==='room-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
   byId('acid-comparison').hidden=!fieldTest;
-  const layout = site ? generateDungeon(site) : rival();
+  const layout = customTest ? fieldRoomLayout() : site ? generateDungeon(site) : rival();
   const grid = new Map(layout.tiles.map(tile => [roomKey(tile),tile]));
   const originX = Math.min(...layout.tiles.map(t=>t.x));
   const originY = Math.min(...layout.tiles.map(t=>t.y));
@@ -541,7 +570,7 @@ function restart() {
     const style=trapName ?? (hall?'hall':ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
     const theme=themes[style] ?? themes.stone;
     roomThemes[t.y-originY][t.x-originX]=theme;
-    const roomName=theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
+    const roomName=customTest&&t===entrance ? 'Field Test Starting Room' : theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
     rooms.set(roomKey({x:cx,y:cy}),roomName);
     const n=hall ? ARCH_LEFT : ROOM_LEFT;
     const end=hall ? ARCH_RIGHT : ROOM_RIGHT;
@@ -566,7 +595,7 @@ function restart() {
       }
     }
 
-    if(layout.crateRooms?.has(key) || (!site && !hall && t!==entrance)){
+    if(layout.crateRooms?.has(key) || (!site && !hall && t!==entrance && !customTest)){
       const inset=ROOM_RIGHT-1;
       actors.push({kind:'crate',x:x+inset,y:y+inset,height:.38,radius:.34,
         bandages:key===vaultKey?2:1,mainCache:key===vaultKey});
@@ -574,7 +603,8 @@ function restart() {
     if(trapName){
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
-    decorateRoom(theme,x,y);
+    if(customTest && t===entrance) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT);
+    else decorateRoom(theme,x,y);
     if(hall){
       const alongX=!exits(t).some(direction=>direction%2===0);
       ceilingLights.push({x,y,halfWidth:alongX?.99:.18,halfLength:alongX?.18:.99});
@@ -590,7 +620,8 @@ function restart() {
   }
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
-  actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
+  if(customTest) Object.assign(player,{x:spawn.x,y:spawn.y+4,angle:-Math.PI/2});
+  else actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
   if(fieldTest){
     const acid=actors.find(a=>a.kind==='trap'&&a.name==='acid');
     Object.assign(player,{x:acid.x,y:acid.y+4.6,angle:-Math.PI/2});
@@ -598,8 +629,9 @@ function restart() {
   carriedWeapon=null;
   weaponEquipped=false;
   clearWeaponAction();
-  stockChests(spawn);
+  stockChests(customTest?center(layout.tiles[1]):spawn);
   pillars=actors.filter(a=>a.kind==='pillar');
+  fieldCover=actors.filter(a=>a.halfX!==undefined);
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
   health=100;
   bandages=0;
@@ -608,9 +640,10 @@ function restart() {
   turn=0;
   startGuard();
   lastRender=undefined;
-  byId('objective').textContent=fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
+  byId('objective').textContent=customTest ? 'Custom Room Field Test · Test cover and movement in the starting room.' : fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
-  if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
+  if(customTest) tell('Four archways lead to adjacent test rooms. Weapons are in the north room.');
+  else if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
   else tell(mobile.matches?'Use Interact to open crates and pick up weapons. Drag the view to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
 
@@ -688,6 +721,13 @@ function solid(x,y) {
   const cell = tile(x,y);
   return cell === '#' || cell === 'W' || cell === 'B';
 }
+function blocksActor(a,x,y,r){
+  if(a.halfX!==undefined){
+    const dx=Math.max(0,Math.abs(a.x-x)-a.halfX),dy=Math.max(0,Math.abs(a.y-y)-a.halfY);
+    return dx*dx+dy*dy<r*r;
+  }
+  return a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r;
+}
 function canStand(x,y) {
   const r = 0.17;
   for (let row = Math.floor(y-r); row <= Math.floor(y+r); row++) {
@@ -695,7 +735,7 @@ function canStand(x,y) {
       if (solid(col,row)) return false;
     }
   }
-  return !actors.some(a => (!a.done || a.kind==='crate') && a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r);
+  return !actors.some(a => (!a.done || a.kind==='crate') && blocksActor(a,x,y,r));
 }
 
 // Grid traversal returns perpendicular depth when given a camera-plane ray.
@@ -904,6 +944,9 @@ sprites.exit=surface(28,32,rect=>{
   rect('#2b3028',8,8,12,6); rect('#2b3028',8,6,4,10); rect('#87482a',13,24,3,8);
 });
 const PROP_ART={
+  parapet:['#655f51','#8d8571',[[0,11,32,21],[0,10,32,4],[2,17,28,2],[0,24,32,2],[6,12,2,6],[19,19,2,7],[10,25,2,7]]],
+  'armor-rack':['#77573d','#aaaeb1',[[4,4,3,27],[25,4,3,27],[12,2,8,7],[9,9,14,10],[6,11,4,10],[22,11,4,10],[10,19,5,10],[17,19,5,10],[2,29,28,3]]],
+  'crate-stack':['#745035','#af8056',[[2,15,15,16],[17,17,15,14],[8,2,17,16],[10,4,13,2],[2,16,30,2],[6,19,2,10],[22,20,2,9],[9,10,15,2]]],
   bench:['#6f4f37','#a67b56',[[2,12,28,5],[5,17,4,10],[23,17,4,10]]],
   banner:['#672d38','#d6aa63',[[7,3,18,23],[3,2,26,2],[13,21,6,9]]],
   barrels:['#795136','#a67d55',[[2,12,12,18],[15,7,15,23],[4,17,25,2],[4,24,25,2]]],
@@ -955,7 +998,7 @@ let guards=[], guardFloor, guardWaypoints, guardStrikeGrace=0;
 function startGuard(){
   const cols=room[0].length;
   guardFloor=room.map((row,y)=>row.map((cell,x)=>
-    (cell==='.'||cell==='A') && !actors.some(a=>a.radius && Math.hypot(a.x-x-.5,a.y-y-.5)<a.radius+.22)));
+    (cell==='.'||cell==='A') && !actors.some(a=>blocksActor(a,x+.5,y+.5,.22))));
   const getPoint=key=>{
     const [x,y]=key.split(',').map(Number);
     const offset=[[0,0],[1,0],[-1,0],[0,1],[0,-1]].find(([dx,dy])=>guardFloor[y+dy]?.[x+dx]);
@@ -1135,10 +1178,10 @@ function hitGuard(dx,dy,limit,damage){
   return hit;
 }
 
-function guardRayLimit(guard,dx,dy){
+function guardRayLimit(guard,dx,dy,targetHeight=STANDING_EYE_HEIGHT){
   const wall=cast(dx,dy,null,guard).distance;
   const limit=Math.min(GUARD_RANGE,wall);
-  return tracePillar(dx,dy,pillars,limit,guard)?.distance ?? limit;
+  return coverLimit(dx,dy,tracePillar(dx,dy,pillars,limit,guard)?.distance ?? limit,guard,targetHeight);
 }
 function refreshGuardBeam(guard){
   guard.fx=Math.cos(guard.angle);
@@ -1152,7 +1195,7 @@ function guardSeesPlayer(guard){
   const dx=player.x-guard.x,dy=player.y-guard.y,d=Math.hypot(dx,dy);
   if(d<.001) return true;
   if(d>GUARD_RANGE || guard.fx*dx+guard.fy*dy<d*Math.cos(GUARD_HALF_ANGLE)) return false;
-  return d<guardRayLimit(guard,dx/d,dy/d);
+  return d<guardRayLimit(guard,dx/d,dy/d,eyeHeight);
 }
 function updateGuardStatus(){
   const badge=byId('guard-status');
@@ -1424,6 +1467,27 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
   ctx.putImageData(planes,0,0);
 }
 // Intersect the horizontal ray with the round shaft before the distant wall.
+function traceCover(dx,dy,prop,origin){
+  let near=-Infinity,far=Infinity;
+  for(const [delta,center,half] of [[dx,prop.x-origin.x,prop.halfX],[dy,prop.y-origin.y,prop.halfY]]){
+    if(Math.abs(delta)<1e-8){
+      if(Math.abs(center)>half) return null;
+      continue;
+    }
+    const first=(center-half)/delta,last=(center+half)/delta;
+    near=Math.max(near,Math.min(first,last));
+    far=Math.min(far,Math.max(first,last));
+  }
+  return far>0&&near<=far ? {near:Math.max(.02,near),far} : null;
+}
+function coverLimit(dx,dy,limit,origin,height){
+  for(const prop of fieldCover){
+    if(prop.height<height) continue;
+    const hit=traceCover(dx,dy,prop,origin);
+    if(hit) limit=Math.min(limit,hit.near);
+  }
+  return limit;
+}
 function tracePillar(dx,dy,candidates,limit,origin=player){
   const rayLength=dx*dx+dy*dy;
   let hit;
@@ -1461,6 +1525,7 @@ function renderFirstPerson(flicker) {
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
   renderPlanes(fx,fy,rx,ry,flicker);
   const nearbyPillars=pillars.filter(p=>Math.abs(p.x-player.x)<24 && Math.abs(p.y-player.y)<24);
+  const parapets=fieldCover.filter(prop=>prop.parapet);
   const openings=Array.from({length:width},()=>[]);
   for (let x=0; x<width; x++) {
     const camera = (x+0.5-width/2)/focal;
@@ -1508,15 +1573,31 @@ function renderFirstPerson(flicker) {
       const glow=ceilingLightAt(player.x+dx*entry,player.y+dy*entry)*flicker;
       opening.band=paintArch(x,opening.distance,opening.lateral,theme,glow);
     }
+    const walls=parapets.map(prop=>({prop,hit:traceCover(dx,dy,prop,player)}))
+      .filter(({hit})=>hit&&hit.near<d).sort((a,b)=>b.hit.near-a.hit.near);
+    for(const {prop,hit} of walls){
+      const scale=focal/hit.near, bottom=horizon+eyeHeight*scale;
+      const front=horizon+(eyeHeight-prop.height)*scale;
+      const top=Math.min(front,horizon+(eyeHeight-prop.height)*focal/Math.min(hit.far,d));
+      ctx.fillStyle='#70695a';
+      ctx.fillRect(x,top,1,front-top);
+      ctx.fillStyle='#56524a';
+      ctx.fillRect(x,front,1,bottom-front);
+      ctx.fillStyle='#8b8270';
+      ctx.fillRect(x,front,1,Math.max(1,scale*.025));
+      ctx.fillStyle='#37342e';
+      ctx.fillRect(x,front+(bottom-front)*.5,1,Math.max(1,scale*.018));
+      openings[x].push({distance:hit.near,band:[top,bottom]});
+    }
   }
 
-  const visible = actors.filter(a=>a.kind!=='pillar' && visibleActor(a)).map(a => {
+  const visible = actors.filter(a=>a.kind!=='pillar' && !a.parapet && visibleActor(a)).map(a => {
     const dx=a.x-player.x, dy=a.y-player.y;
     return { a, d:dx*fx+dy*fy, lateral:dx*rx+dy*ry };
   }).filter(s => s.d > .08).sort((a,b) => b.d-a.d);
   for (const {a,d,lateral} of visible) {
     const sprite = spriteFor(a);
-    const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
+    const scale = focal/d, h = a.height*scale, w = a.sceneWidth ? Math.min(a.sceneWidth,2)*scale : h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
     const lift=(a.lift ?? 0)+(a.kind==='spores'?.037*Math.sin(flicker*13+a.x):0);
     const top = horizon+(eyeHeight-lift)*scale-h;
@@ -2093,8 +2174,13 @@ function renderMap(mini=false) {
       continue;
     }
     if(a.kind==='furnishing'){
-      const prop=spriteFor(a), side=Math.max(2,size*.9);
-      ctx.drawImage(prop,left+a.x*size-side/2,top+a.y*size-side/2,side,side);
+      if(a.halfX!==undefined){
+        ctx.fillStyle=a.parapet?'#847b69':a.height<.5?'#a6845e':'#a59376';
+        ctx.fillRect(left+(a.x-a.halfX)*size,top+(a.y-a.halfY)*size,a.halfX*2*size,a.halfY*2*size);
+      }else{
+        const prop=spriteFor(a), side=Math.max(2,size*.9);
+        ctx.drawImage(prop,left+a.x*size-side/2,top+a.y*size-side/2,side,side);
+      }
       continue;
     }
     if (mini || size<12) {
