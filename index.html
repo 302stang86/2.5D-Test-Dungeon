@@ -73,6 +73,12 @@ const actors = [
   { kind:'guard', x:2.5, y:6.5, height:0.86, radius:0.19 },
   { kind:'chest', x:9.5, y:2.5, height:0.38, radius:0.22 }
 ];
+const patrols = [
+  { kind:'patrol', homeX:4.5, homeY:4.5, color:'#a73548', trim:'#d4af37', speed:1.15 },
+  { kind:'patrol', homeX:9.5, homeY:6.5, color:'#4579aa', trim:'#c0c0c0', speed:1.3 }
+].map(patrol => ({ ...patrol, radius:0.19, height:0.84 }));
+actors.push(...patrols);
+const torches = actors.filter(a => a.kind === 'torch');
 const canvas = document.querySelector('#view');
 const ctx = canvas.getContext('2d');
 const width = canvas.width, height = canvas.height, horizon = height / 2;
@@ -88,6 +94,9 @@ const byId = id => document.getElementById(id);
 const tell = message => { byId('message').textContent = message; };
 function restart() {
   Object.assign(player, { x:4.5, y:7.5, angle:-0.62 });
+  patrols.forEach((patrol,index) => Object.assign(patrol,{
+    x:patrol.homeX, y:patrol.homeY, angle:index*Math.PI/2, remaining:1+index*.5, idle:false, stride:0
+  }));
   hasKey = doorOpen = gateOpen = escaped = false;
   tell('The keeper may know where to look.');
 }
@@ -98,14 +107,36 @@ function solid(x,y) {
   const cell = tile(x,y);
   return cell === '#' || cell === 'B' || (cell === 'D' && !doorOpen) || (cell === 'G' && !gateOpen);
 }
-function canStand(x,y) {
-  const r = 0.17;
+function canStand(x,y,actor) {
+  const r = actor?.radius ?? 0.17;
   for (let row = Math.floor(y-r); row <= Math.floor(y+r); row++) {
     for (let col = Math.floor(x-r); col <= Math.floor(x+r); col++) {
       if (solid(col,row)) return false;
     }
   }
-  return !actors.some(a => a.radius && Math.hypot(a.x-x,a.y-y) < a.radius+r);
+  if (actor && Math.hypot(player.x-x,player.y-y) < 0.17+r) return false;
+  return !actors.some(a => a !== actor && a.radius && Math.hypot(a.x-x,a.y-y) < a.radius+r);
+}
+function updatePatrols(dt) {
+  if (escaped) return;
+  for (const patrol of patrols) {
+    patrol.remaining -= dt;
+    if (patrol.remaining <= 0) {
+      patrol.angle = Math.random()*Math.PI*2;
+      patrol.idle = Math.random()<.25;
+      patrol.remaining = .85+Math.random()*1.5;
+    }
+    if (patrol.idle) continue;
+    const x = patrol.x+Math.cos(patrol.angle)*patrol.speed*dt;
+    const y = patrol.y+Math.sin(patrol.angle)*patrol.speed*dt;
+    if (canStand(x,y,patrol)) {
+      patrol.x=x;
+      patrol.y=y;
+      patrol.stride+=dt*9;
+    } else {
+      patrol.angle+=Math.PI;
+    }
+  }
 }
 
 // Grid traversal returns perpendicular depth when given a camera-plane ray.
@@ -221,6 +252,20 @@ const sprites = {
     rect('#ffe298',6,6,3,7);
   })
 };
+for (const patrol of patrols) {
+  patrol.sprite = surface(32,40,rect => {
+    rect('#2a1d15',10,29,5,10); rect('#2a1d15',18,29,5,10);
+    rect(patrol.color,8,14,17,17);
+    rect(patrol.color,4,16,4,11); rect(patrol.color,25,16,4,11);
+    rect('#e0b18c',4,27,4,3); rect('#e0b18c',25,27,4,3);
+    rect(patrol.trim,8,24,17,3); rect(patrol.trim,15,14,3,10);
+    rect('#e0b18c',11,6,11,9); rect('#4a4e54',10,3,13,5);
+    rect('#27221d',13,9,2,2); rect('#27221d',18,9,2,2);
+  });
+}
+function spriteFor(actor) {
+  return actor.sprite ?? sprites[actor.kind === 'chest' && hasKey ? 'opened' : actor.kind];
+}
 function renderPlanes(fx,fy,rx,ry) {
   const data = planes.data;
   for (let y=0; y<height; y++) {
@@ -244,7 +289,7 @@ function renderPlanes(fx,fy,rx,ry) {
   }
   ctx.putImageData(planes,0,0);
 }
-function renderFirstPerson() {
+function renderFirstPerson(flicker) {
   const fx=Math.cos(player.angle), fy=Math.sin(player.angle), rx=-fy, ry=fx;
   renderPlanes(fx,fy,rx,ry);
   for (let x=0; x<width; x++) {
@@ -253,8 +298,13 @@ function renderFirstPerson() {
     const d = Math.max(0.01,hit.distance), h = focal/d, top = horizon-h/2;
     depth[x] = d;
     ctx.drawImage(walls[tile(hit.x,hit.y)],Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
+    let torchLight=0;
+    for (const torch of torches) {
+      torchLight=Math.max(torchLight,.3-Math.hypot(torch.x-hitX,torch.y-hitY)*.095);
+    }
     const light = (hit.side === 'x' ? .96 : .75)/(1+d*.16);
-    ctx.fillStyle = `rgba(13,10,11,${1-light})`;
+    ctx.fillStyle = `rgba(13,10,11,${Math.max(0,1-light-torchLight*flicker)})`;
     ctx.fillRect(x,top,1,h);
   }
 
@@ -263,10 +313,12 @@ function renderFirstPerson() {
     return { a, d:dx*fx+dy*fy, lateral:dx*rx+dy*ry };
   }).filter(s => s.d > .08).sort((a,b) => b.d-a.d);
   for (const {a,d,lateral} of visible) {
-    const sprite = sprites[a.kind === 'chest' && hasKey ? 'opened' : a.kind];
+    const sprite = spriteFor(a);
     const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
-    const top = horizon+(0.5-(a.lift ?? 0))*scale-h;
+    const bob = a.kind === 'patrol' && !a.idle ? Math.abs(Math.sin(a.stride))*.025*h : 0;
+    const top = horizon+(0.5-(a.lift ?? 0))*scale-h-bob;
+    if (a.kind === 'torch') drawTorchGlow(width/2+lateral*scale,top+h*.3,Math.max(4,h*.95),d,flicker);
     ctx.globalAlpha = Math.max(.6,1-d*.032);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
       if (depth[x]>d) ctx.drawImage(sprite,Math.floor((x-start)/w*sprite.width),0,1,sprite.height,x,top,1,h);
@@ -277,28 +329,62 @@ function renderFirstPerson() {
   ctx.fillRect(width/2-2,horizon,5,1);
   ctx.fillRect(width/2,horizon-2,1,5);
 }
-function renderMap() {
-  const size=23, left=(width-12*size)/2, top=(height-12*size)/2;
+function drawTorchGlow(x,y,radius,d,flicker) {
+  const left=Math.max(0,Math.floor(x-radius)), right=Math.min(width,Math.ceil(x+radius));
+  if (left>=right) return;
+  ctx.save();
+  ctx.beginPath();
+  for (let col=left; col<right; col++) {
+    if (depth[col]>d) ctx.rect(col,y-radius,1,2*radius);
+  }
+  ctx.clip();
+  const glow=ctx.createRadialGradient(x,y,0,x,y,radius);
+  glow.addColorStop(0,`rgba(255,166,56,${.42*flicker})`);
+  glow.addColorStop(1,'rgba(255,80,0,0)');
+  ctx.fillStyle=glow;
+  ctx.fillRect(left,y-radius,right-left,2*radius);
+  ctx.restore();
+}
+function renderMap(mini=false) {
+  const size=mini ? 6 : 23;
+  const left=mini ? 9 : (width-room[0].length*size)/2;
+  const top=mini ? 9 : (height-room.length*size)/2;
   ctx.fillStyle='#15120f';
-  ctx.fillRect(0,0,width,height);
+  if (mini) ctx.fillRect(left-3,top-3,room[0].length*size+5,room.length*size+5);
+  else ctx.fillRect(0,0,width,height);
   room.forEach((row,y) => [...row].forEach((cell,x) => {
     const px=left+x*size, py=top+y*size;
     ctx.fillStyle=(x+y)%2 ? '#6c5747' : '#5b473a';
     ctx.fillRect(px,py,size-1,size-1);
-    if (solid(x,y)) ctx.drawImage(walls[cell],px,py,size-1,size-1);
+    if (solid(x,y)) {
+      if (mini) {
+        ctx.fillStyle=cell === 'G' ? '#aeb3bf' : cell === 'D' ? '#ac784b' : '#8b8378';
+        ctx.fillRect(px,py,size-1,size-1);
+      } else ctx.drawImage(walls[cell],px,py,size-1,size-1);
+    }
     if ((cell === 'D' || cell === 'G') && !solid(x,y)) {
       ctx.fillStyle='#d2a574';
       ctx.fillRect(px,py,size-1,2);
     }
   }));
   for (const a of actors) {
-    const sprite=sprites[a.kind === 'chest' && hasKey ? 'opened' : a.kind];
+    if (mini) {
+      if (a.kind === 'patrol') {
+        ctx.fillStyle=a.color;
+        ctx.beginPath();
+        ctx.arc(left+a.x*size,top+a.y*size,2.2,0,Math.PI*2);
+        ctx.fill();
+      }
+      continue;
+    }
+    const sprite=spriteFor(a);
     const h=size*.74, w=Math.min(size*.9,h*sprite.width/sprite.height);
     ctx.drawImage(sprite,left+a.x*size-w/2,top+a.y*size-h/2,w,h);
   }
   ctx.save();
   ctx.translate(left+player.x*size,top+player.y*size);
   ctx.rotate(player.angle);
+  if (mini) ctx.scale(.46,.46);
   ctx.fillStyle='#ffda85';
   ctx.strokeStyle='#302214';
   ctx.beginPath();
@@ -391,11 +477,14 @@ function frame(now) {
   const dx=(forward*fx-strafe*fy)*distance, dy=(forward*fy+strafe*fx)*distance;
   if (canStand(player.x+dx,player.y)) player.x+=dx;
   if (canStand(player.x,player.y+dy)) player.y+=dy;
+  updatePatrols(dt);
   if (gateOpen && player.y>=10 && Math.floor(player.x)===8 && !escaped) {
     escaped=true;
     tell('You escaped the dungeon. Switch views to compare the exit, or restart to run it again.');
   }
-  const viewState = [mode,player.x,player.y,player.angle,hasKey,doorOpen,gateOpen,escaped].join('|');
+  const torchTick=mode === 'eye' ? Math.floor(now/65) : 0;
+  const viewState = [mode,player.x,player.y,player.angle,hasKey,doorOpen,gateOpen,escaped,torchTick,
+    ...patrols.flatMap(p => [p.x,p.y,p.idle])].join('|');
   if (viewState === lastRender) {
     requestAnimationFrame(frame);
     return;
@@ -403,8 +492,10 @@ function frame(now) {
   lastRender = viewState;
   byId('position').textContent = `Tile (${Math.floor(player.x)}, ${Math.floor(player.y)}) · Position (${player.x.toFixed(2)}, ${player.y.toFixed(2)})`;
   byId('inventory').textContent = escaped ? 'Escaped' : hasKey ? 'Inventory: Iron key' : 'Inventory: Empty';
-  if (mode === 'eye') renderFirstPerson();
-  else renderMap();
+  if (mode === 'eye') {
+    renderFirstPerson(.92+.09*Math.sin(torchTick*.8)+.04*Math.sin(torchTick*2.4));
+    renderMap(true);
+  } else renderMap();
   requestAnimationFrame(frame);
 }
 ctx.imageSmoothingEnabled=false;
