@@ -253,6 +253,9 @@ function rival(id,p,name,arms){
 
 
 // Both views share the projected room grid and encounter state.
+const ROOM_SPACING=11;
+const EYE_HEIGHT=.5;
+const CEILING_HEIGHT=1.3;
 let room,rooms,actors,torches,site,health,lootBag,purse,picks,potions,defeated,bossDown,riposte,turn;
 const canvas = document.querySelector('#view');
 const ctx = canvas.getContext('2d');
@@ -277,14 +280,14 @@ function restart() {
   const grid = new Map(layout.tiles.map(tile => [roomKey(tile),tile]));
   const originX = Math.min(...layout.tiles.map(t=>t.x));
   const originY = Math.min(...layout.tiles.map(t=>t.y));
-  const cols=(Math.max(...layout.tiles.map(t=>t.x))-originX+1)*5+2;
-  const rows=(Math.max(...layout.tiles.map(t=>t.y))-originY+1)*5+2;
+  const cols=(Math.max(...layout.tiles.map(t=>t.x))-originX+1)*ROOM_SPACING;
+  const rows=(Math.max(...layout.tiles.map(t=>t.y))-originY+1)*ROOM_SPACING;
   room=Array.from({length:rows},()=>Array(cols).fill('#'));
   rooms=new Map();
   actors=[];
   const bossKey=layout.bossKey ?? roomKey(layout.tiles.find(t=>t.type===0));
   const entrance=layout.tiles.find(t=>t.type===17);
-  const center=t=>({x:(t.x-originX)*5+3.5,y:(t.y-originY)*5+3.5});
+  const center=t=>({x:(t.x-originX)*ROOM_SPACING+4.5,y:(t.y-originY)*ROOM_SPACING+4.5});
   const boss=grid.get(bossKey);
   const production={0:['gold','stone'],2:['food'],3:['stone'],5:['rp'],10:['gold'],18:['gold'],19:['rp']};
   const producers={gold:0,stone:0,food:0,rp:0};
@@ -292,13 +295,23 @@ function restart() {
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const roomName=DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0];
-    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) room[cy+dy][cx+dx]='.';
-    rooms.set(`${Math.floor((cx-1)/5)},${Math.floor((cy-1)/5)}`,roomName);
+    // Six by five rooms. Corridors occupy the gap between single-cell wall faces.
+    for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=3;dx++) {
+      room[cy+dy][cx+dx]='.';
+      rooms.set(roomKey({x:cx+dx,y:cy+dy}),roomName);
+    }
     for(const [d,[dx,dy]] of DIRS.entries()){
       const neighbor=grid.get(roomKey({x:t.x+dx,y:t.y+dy}));
-      if(neighbor && compatible(t,neighbor,d)) room[cy+2*dy][cx+2*dx]='.';
-      if(neighbor===boss && compatible(t,neighbor,d) && layout.keyRoom){
-        room[cy+2*dy][cx+2*dx]='G';
+      if(!neighbor || !compatible(t,neighbor,d)) continue;
+      const boundary=d===1 ? 4 : 3;
+      // Each connected room draws its half and meets the other at the midpoint.
+      const last=Math.floor(ROOM_SPACING/2);
+      for(let step=boundary;step<=last;step++) {
+        for(let lane=0;lane<2;lane++){
+          const col=cx+dx*step+Math.abs(dy)*lane;
+          const rowIndex=cy+dy*step+Math.abs(dx)*lane;
+          room[rowIndex][col]=neighbor===boss && layout.keyRoom && step===boundary ? 'G' : '=';
+        }
       }
     }
 
@@ -312,17 +325,22 @@ function restart() {
     const loot=site ? layout.caches[key] : t.type!==0 && resourceKinds.length ?
       Object.fromEntries(resourceKinds.map(kind=>[kind,Math.round(layout.treasury[kind]/producers[kind]*(defender?.2:.1))])) : null;
     const chest=layout.chests?.[key];
-    if(chest || loot) actors.push({kind:'chest',x:x+.89,y:y+.76,height:.38,roomKey:key,chest,loot});
+    if(chest || loot) actors.push({kind:'chest',x:x+3,y:y+2,height:.38,radius:.31,roomKey:key,chest,loot});
     if(layout.keyRoom===key) actors.push({kind:'key',x:x-.92,y:y+.76,height:.25});
     if(t.dungeonTrap || (!site && t.type===16 && t.y===entrance.y-2)){
       actors.push({kind:'trap',name:t.dungeonTrap ?? 'spikes',x,y,height:.06});
     }
     if(t.type===17 || key===bossKey || (!site && t.type===15) || (site && layout.tiles.indexOf(t)%6===1)){
-      actors.push({kind:'torch',x:x-1.26,y:y-.87,lift:.38,height:.52});
+      actors.push({kind:'torch',x:x-2.22,y:y-1.83,lift:.38,height:.52});
     }
     if(key===bossKey && site?.id==='dungeon-medium'){
       for(const dx of [-.95,0,.95]) actors.push({kind:'ward',x:x+dx,y:y-1.15,height:.38});
     }
+  }
+  // Mark a single layer of masonry around walkable space. The rest is map void.
+  for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++) {
+    if(room[y][x]!=='#') continue;
+    if(DIRS.some(([dx,dy])=>['.','=','G'].includes(room[y+dy][x+dx]))) room[y][x]='W';
   }
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
@@ -467,7 +485,7 @@ function tile(x,y) {
 }
 function solid(x,y) {
   const cell = tile(x,y);
-  return cell === '#' || cell === 'B' || (cell === 'G' && !hasKey);
+  return cell === '#' || cell === 'W' || cell === 'B' || (cell === 'G' && !hasKey);
 }
 function canStand(x,y) {
   const r = 0.17;
@@ -476,7 +494,7 @@ function canStand(x,y) {
       if (solid(col,row)) return false;
     }
   }
-  return !actors.some(a => !a.done && a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r);
+  return !actors.some(a => (!a.done || a.kind==='chest') && a.radius && Math.hypot(a.x-x,a.y-y)<a.radius+r);
 }
 
 // Grid traversal returns perpendicular depth when given a camera-plane ray.
@@ -629,7 +647,8 @@ function renderPlanes(fx,fy,rx,ry) {
   const data = planes.data;
   for (let y=0; y<height; y++) {
     const isFloor = y >= horizon;
-    const distance = 0.5*focal/Math.abs(y+0.5-horizon);
+    const planeOffset=isFloor ? EYE_HEIGHT : CEILING_HEIGHT-EYE_HEIGHT;
+    const distance=planeOffset*focal/Math.abs(y+0.5-horizon);
     const step = distance/focal;
     let worldX = player.x+distance*fx+(0.5-width/2)*step*rx;
     let worldY = player.y+distance*fy+(0.5-width/2)*step*ry;
@@ -654,9 +673,10 @@ function renderFirstPerson(flicker) {
   for (let x=0; x<width; x++) {
     const camera = (x+0.5-width/2)/focal;
     const hit = cast(fx+rx*camera,fy+ry*camera);
-    const d = Math.max(0.01,hit.distance), h = focal/d, top = horizon-h/2;
+    const d=Math.max(.01,hit.distance), scale=focal/d;
+    const h=CEILING_HEIGHT*scale, top=horizon-(CEILING_HEIGHT-EYE_HEIGHT)*scale;
     depth[x] = d;
-    ctx.drawImage(walls[tile(hit.x,hit.y)],Math.floor(hit.u*64),0,1,64,x,top,1,h);
+    ctx.drawImage((walls[tile(hit.x,hit.y)] ?? walls['#']),Math.floor(hit.u*64),0,1,64,x,top,1,h);
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     let torchLight=0;
     for (const torch of torches) {
@@ -675,7 +695,7 @@ function renderFirstPerson(flicker) {
     const sprite = spriteFor(a);
     const scale = focal/d, h = a.height*scale, w = h*sprite.width/sprite.height;
     const start = width/2+lateral*scale-w/2;
-    const top = horizon+(0.5-(a.lift ?? 0))*scale-h;
+    const top = horizon+(EYE_HEIGHT-(a.lift ?? 0))*scale-h;
     if (a.kind === 'torch') drawTorchGlow(width/2+lateral*scale,top+h*.3,Math.max(4,h*.95),d,flicker);
     ctx.globalAlpha = Math.max(.6,1-d*.032);
     for (let x=Math.max(0,Math.ceil(start)); x<Math.min(width,start+w); x++) {
@@ -712,14 +732,15 @@ function renderMap(mini=false) {
   if (mini) ctx.fillRect(left-3,top-3,room[0].length*size+5,room.length*size+5);
   else ctx.fillRect(0,0,width,height);
   room.forEach((row,y) => row.forEach((cell,x) => {
+    if(cell==='#') return;
     const px=left+x*size, py=top+y*size;
-    ctx.fillStyle=(x+y)%2 ? '#6c5747' : '#5b473a';
+    ctx.fillStyle=cell==='=' ? '#a58e70' : (x+y)%2 ? '#6c5747' : '#5b473a';
     ctx.fillRect(px,py,cellSize,cellSize);
     if (solid(x,y)) {
       if (mini) {
         ctx.fillStyle=cell === 'G' ? '#aeb3bf' : cell === 'D' ? '#ac784b' : '#8b8378';
         ctx.fillRect(px,py,cellSize,cellSize);
-      } else ctx.drawImage(walls[cell],px,py,cellSize,cellSize);
+      } else ctx.drawImage(walls[cell] ?? walls['#'],px,py,cellSize,cellSize);
     }
     if ((cell === 'D' || cell === 'G') && !solid(x,y)) {
       ctx.fillStyle='#d2a574';
@@ -826,7 +847,7 @@ function frame(now) {
     return;
   }
   lastRender = viewState;
-  const roomName=rooms.get(`${Math.floor((player.x-1)/5)},${Math.floor((player.y-1)/5)}`) ?? 'Passage';
+  const roomName=rooms.get(roomKey({x:Math.floor(player.x),y:Math.floor(player.y)})) ?? 'Hallway';
   const foe=targetActor(['enemy','boss']);
   byId('position').textContent=`${roomName} · HP ${health}/100 · Potions ${potions} · Lockpicks ${picks}${foe && !defeated && !escaped ? ` · ${foe.name} ${foe.hp}/${foe.maxHp} HP` : ''}`;
   const loot=Object.entries(lootBag).map(([kind,amount])=>`${amount} ${kind==='rp'?'research':kind}`).join(' · ');
