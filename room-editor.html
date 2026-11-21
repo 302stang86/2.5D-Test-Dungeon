@@ -45,7 +45,7 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
 .cell[data-cover=soft] { background:#66476c; }
 .cell[data-anchor=true] { border-color:#e6bc82; }
 .cell[data-entrance=true] { background:#375442; }
-input { font:inherit; color:inherit; background:#191613; border:1px solid #896f53; border-radius:6px; padding:9px; min-width:0; }
+input, select { font:inherit; color:inherit; background:#191613; border:1px solid #896f53; border-radius:6px; padding:9px; min-width:0; }
 .toolbar input[type=text] { flex:1 1 160px; }
 #prop-info { color:#e0c8a9; margin:8px 0; min-height:2.5em; font-size:.9rem; }
 @media(max-width:720px) {
@@ -105,7 +105,11 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
 <div class="toolbar">
 <input id="name" type="text" maxlength="80" aria-label="Room name" value="Untitled Room">
 <button id="undo" disabled>Undo</button>
-<button id="save">Save JSON</button>
+<button id="save-room">Save Room</button>
+<button id="save-copy">Save as New Room</button>
+<button id="save-test">Save &amp; Test</button>
+<button id="save">Export JSON</button>
+<label for="saved-room">My Rooms</label> <select id="saved-room"><option value="">Open a saved room</option></select>
 <button id="open">Open JSON</button>
 <button id="clear" disabled>Clear room</button>
 <button id="toggle-preview" aria-controls="room-preview" aria-expanded="false">Show 3D preview</button>
@@ -131,6 +135,42 @@ input { font:inherit; color:inherit; background:#191613; border:1px solid #896f5
 <script>
 'use strict';
 const size=13;
+const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+function readRoomLibrary(){
+  const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
+  if(stored===null) return {rooms:[],test:null};
+  if(!Array.isArray(stored.rooms)) throw new Error('Saved rooms could not be read.');
+  return stored;
+}
+function playableRoom(data){
+  if(data?.format!=='dungeon-room'||data.version!==1||data.width!==13||data.height!==13||
+    typeof data.name!=='string'||data.name.length>80||!Array.isArray(data.props)||data.props.length>169||
+    !Array.isArray(data.doorways)||data.doorways.length>48) throw new Error('Invalid room layout.');
+  const marked=new Set();
+  function reserve(x,y){
+    const key=y*13+x;
+    if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>=13||y>=13||marked.has(key))
+      throw new Error('A room item overlaps, or is outside the room.');
+    marked.add(key);
+  }
+  const doorways=data.doorways.map(({x,y})=>{
+    if(x!==0&&x!==12&&y!==0&&y!==12) throw new Error('Doorways belong on the room edge.');
+    reserve(x,y);
+    return {x,y};
+  });
+  const props=data.props.map(({type,x,y,rotation})=>{
+    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    for(let i=0;i<span;i++){
+      const offset=i-(type==='arched_entry'?1:0);
+      reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
+    }
+    return {type,x,y,rotation,width:rotation===0?span:1,height:rotation===90?span:1,cover,lootContainer,emitsLight};
+  });
+  return {format:'dungeon-room',version:1,width:13,height:13,name:data.name,doorways,props};
+}
+
 const WALL_TYPES={
   full_stone:{span:1,height:3,thickness:.4},
   arched_entry:{span:3,height:3,thickness:.4,archWidth:1.8,archHeight:2.2}
@@ -204,6 +244,7 @@ const byId=id=>document.getElementById(id);
 const grid=byId('grid'), status=byId('status'), name=byId('name');
 const file=byId('file'), undo=byId('undo'), clear=byId('clear');
 const draftKey='dungeon-room-editor-v1';
+let savedRoomId=null;
 let items=[], doors=[], tool='pillar', rotation=0, focusedTile=0;
 const history=[];
 let selected=null, moving=false, previewIndex=null, touchIndex=null;
@@ -252,7 +293,7 @@ function decode(data){
 function apply(room){ name.value=room.name; items=room.items; doors=room.doors; selected=null; moving=false; previewIndex=touchIndex=null; }
 try{
   const draft=localStorage.getItem(draftKey);
-  if(draft) apply(decode(JSON.parse(draft)));
+  if(draft){const data=JSON.parse(draft);apply(decode(data));savedRoomId=data.savedRoomId??null;}
 }catch{ say('Could not restore the browser draft. You can open a saved JSON room.'); }
 
 function propThumbnail(type){
@@ -355,12 +396,12 @@ function render(){
   updateRoomPreview();
 }
 function remember(){
-  history.push({name:name.value,items,doors});
+  history.push({name:name.value,items,doors,savedRoomId});
   if(history.length>50) history.shift();
 }
 function persist(){
   render();
-  try{localStorage.setItem(draftKey,JSON.stringify(encode()));}
+  try{localStorage.setItem(draftKey,JSON.stringify({...encode(),savedRoomId}));}
   catch{say('Browser storage is unavailable. Use Save JSON to keep this room.');}
 }
 function replaceSelected(next,message){
@@ -474,7 +515,9 @@ grid.onkeydown=event=>{
 name.onchange=persist;
 undo.onclick=()=>{
   if(!history.length) return;
-  apply(history.pop());
+  const previous=history.pop();
+  apply(previous);
+  savedRoomId=previous.savedRoomId;
   say('Last change undone.');
   persist();
 };
@@ -507,6 +550,7 @@ file.onchange=async()=>{
     const room=decode(JSON.parse(await selection.text()));
     remember();
     apply(room);
+    savedRoomId=null;
     say('Room opened. Undo restores the previous room.');
     persist();
   }catch(error){say(error instanceof SyntaxError?'This file is not valid JSON.':error.message);}
@@ -718,6 +762,60 @@ async function startRoomPreview(){
     previewStatus.textContent='3D preview unavailable. It requires an internet connection and WebGL.';
   }
 }
+const savedPicker=byId('saved-room');
+function refreshSavedRooms(){
+  try{
+    const options=readRoomLibrary().rooms.map(record=>new Option(record.room.name,record.id));
+    savedPicker.replaceChildren(new Option('Open a saved room',''),...options);
+    savedPicker.value=savedRoomId??'';
+  }catch{ say('My Rooms could not be loaded.'); }
+}
+function saveToLibrary({copy=false,test=false}={}){
+  if(!name.value.trim()){say('Enter a room name first.');name.focus();return;}
+  try{
+    const room=encode();
+    const normalized=playableRoom(room);
+    if(test){
+      const filled=normalized.props.filter(prop=>prop.cover!=='soft'&&prop.type!=='arched_entry')
+        .reduce((count,prop)=>count+prop.width*prop.height,0);
+      if(filled>=size*size) throw new Error('Leave an open floor tile for the player.');
+    }
+    const library=readRoomLibrary();
+    const current=copy?null:library.rooms.find(record=>record.id===savedRoomId);
+    const id=current?.id??crypto.randomUUID();
+    const record={id,room};
+    library.rooms=current?library.rooms.map(entry=>entry.id===id?record:entry):[...library.rooms,record];
+    if(test) library.test=room;
+    localStorage.setItem(ROOM_LIBRARY_KEY,JSON.stringify(library));
+    savedRoomId=id;
+    refreshSavedRooms();
+    persist();
+    say(test?'Test room saved. Opening the game…':room.name+' saved to My Rooms.');
+    if(test){
+      const opened=window.open('./?test-room=1','_blank');
+      if(opened) opened.opener=null;
+      else window.location.assign('./?test-room=1');
+    }
+  }catch(error){say('Could not save room. '+error.message);}
+}
+savedPicker.onchange=()=>{
+  if(!savedPicker.value) return;
+  try{
+    const record=readRoomLibrary().rooms.find(entry=>entry.id===savedPicker.value);
+    if(!record) throw new Error('The room is no longer available.');
+    const room=decode(record.room);
+    remember();
+    apply(room);
+    savedRoomId=record.id;
+    persist();
+    say(record.room.name+' opened. Undo restores the previous draft.');
+  }catch(error){say(error.message);}
+};
+byId('save-room').onclick=()=>saveToLibrary();
+byId('save-copy').onclick=()=>saveToLibrary({copy:true});
+byId('save-test').onclick=()=>saveToLibrary({test:true});
+addEventListener('storage',event=>{if(event.key===ROOM_LIBRARY_KEY) refreshSavedRooms();});
+refreshSavedRooms();
 let previewStarted=false;
 byId('toggle-preview').onclick=()=>{
   previewPanel.hidden=!previewPanel.hidden;
