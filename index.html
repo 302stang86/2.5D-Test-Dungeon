@@ -1762,12 +1762,12 @@ function separateActors(){
   }
 }
 // ---- Combat: take cover, wait crouched, step out, fire a short burst, return ----
-function lineClear(ox,oy,tx,ty,h=STANDING_EYE_HEIGHT){
+function lineClear(ox,oy,tx,ty){
   const dx=tx-ox,dy=ty-oy,d=Math.hypot(dx,dy),origin={x:ox,y:oy};
   if(d<.05) return true;
   if(cast(dx,dy,null,origin).distance<d-.3) return false;
   if(tracePillar(dx,dy,pillars,d-.3,origin)) return false;
-  return coverLimit(dx,dy,d,origin,h)>=d-.3;
+  return coverLimit(dx,dy,d,origin,STANDING_EYE_HEIGHT)>=d-.3;
 }
 function nearbyCell(guard,radius,test){
   const gx=Math.floor(guard.x),gy=Math.floor(guard.y);
@@ -1783,16 +1783,14 @@ function guardShoot(guard,pd){
   guard.shotCooldown=guard.ranged.interval*(.85+Math.random()*.3);
   shootAtPlayer(guard,pd);
 }
-function guardCombat(guard,dt,pd,pdx,pdy,sees){
+function guardCombat(guard,dt,pd,pdx,pdy){
   const r=guard.ranged;
   const c=guard.combat??(guard.combat={state:'engage',timer:0,cover:null,shots:0,tried:0,walk:0});
   c.tried=Math.max(0,c.tried-dt);
-  if(sees) guard.angle=Math.atan2(pdy,pdx);
-  else if(guard.lastSeen) guard.angle=Math.atan2(guard.lastSeen.y-guard.y,guard.lastSeen.x-guard.x);
+  guard.angle=Math.atan2(pdy,pdx);
   const go=cell=>{ setGuardPath(guard,cellKey(cell.x,cell.y));c.walk=0; };
   const walk=()=>{ c.walk+=dt;return followGuardPath(guard,dt,guard.chaseSpeed*(alarm?1.12:1)); };
-  const clear=()=>lineClear(guard.x,guard.y,player.x,player.y,eyeHeight);
-  const lose=()=>{ guard.combat=null;guard.height=.85;guard.shotCooldown=Math.max(guard.shotCooldown,.8);return false; }; // player hid or left the view cone: stop firing and search
+  const clear=()=>lineClear(guard.x,guard.y,player.x,player.y);
   switch(c.state){
     case 'engage': {
       guard.height=.85;
@@ -1801,7 +1799,6 @@ function guardCombat(guard,dt,pd,pdx,pdy,sees){
         const cell=nearbyCell(guard,7,(x,y)=>Math.hypot(x-player.x,y-player.y)>3&&!lineClear(x,y,player.x,player.y));
         if(cell){ c.cover=cell;c.state='toCover';go(cell);return true; }
       }
-      if(!sees) return lose();
       if(pd>r.range) return false;
       if(guard.shotCooldown===0&&clear()) guardShoot(guard,pd);
       return true;
@@ -1817,7 +1814,7 @@ function guardCombat(guard,dt,pd,pdx,pdy,sees){
       c.timer-=dt;
       if(clear()){ c.state='engage';c.tried=0; return true; } // flanked
       if(c.timer<=0){
-        const peek=nearbyCell(guard,4,(x,y)=>{ const d=Math.hypot(x-player.x,y-player.y);return d>=3&&d<=r.range&&lineClear(x,y,player.x,player.y,eyeHeight); });
+        const peek=nearbyCell(guard,4,(x,y)=>{ const d=Math.hypot(x-player.x,y-player.y);return d>=3&&d<=r.range&&lineClear(x,y,player.x,player.y); });
         if(peek){ c.state='toPeek';go(peek); } else { c.state='engage';c.tried=0; }
       }
       return true;
@@ -1825,7 +1822,6 @@ function guardCombat(guard,dt,pd,pdx,pdy,sees){
     case 'toPeek': {
       guard.height=.85;
       const done=!walk();
-      if(!clear()&&(done||c.walk>4)) return lose();
       if((done&&c.walk>.1)||c.walk>4||(clear()&&c.walk>.3)){ c.state='fire';c.shots=2+(Math.random()<.5?1:0);c.timer=.4;guard.moving=false; }
       return true;
     }
@@ -1833,8 +1829,8 @@ function guardCombat(guard,dt,pd,pdx,pdy,sees){
       guard.height=.85;
       c.timer-=dt;
       if(c.timer<=0&&c.shots>0){
-        if(sees&&clear()){ guardShoot(guard,pd);c.shots--;c.timer=r.interval*.45; }
-        else return lose();
+        if(clear()){ guardShoot(guard,pd);c.shots--;c.timer=r.interval*.45; }
+        else c.shots=0;
       }
       if(c.shots<=0&&c.timer<=0){ c.state=c.cover?'toCover':'engage';if(c.cover) go(c.cover); }
       return true;
@@ -1904,7 +1900,7 @@ function updateGuard(guard,dt){
         tell(`${guard.name} struck you.`);
         hurt(guard.melee,guard);
       }
-    } else if(guard.ranged && pd>2.4 && pd<=guard.ranged.range+3 && (aware || (guard.combat&&guard.combat.state!=='engage')) && guardCombat(guard,dt,pd,pdx,pdy,sees)){
+    } else if(guard.ranged && pd>2.4 && pd<=guard.ranged.range+3 && (aware || (guard.combat&&guard.combat.state!=='engage')) && guardCombat(guard,dt,pd,pdx,pdy)){
       if(guard.mode==='search') guard.search=Math.max(guard.search,3);
     } else {
       if(guard.repath===0){
