@@ -43,6 +43,10 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
  .palette { display:flex; }
  .tools,.map { padding:10px; }
 }
+.saved-rooms { display:grid; gap:6px; margin-top:12px; max-height:280px; overflow:auto; }
+.saved-rooms button { display:flex; align-items:center; gap:8px; text-align:left; overflow-wrap:anywhere; }
+.saved-rooms canvas { flex:none; width:39px; height:39px; }
+.cell[data-room=custom] { background:#4d6457; }
 </style>
 </head>
 <body>
@@ -60,7 +64,11 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
         <button data-tool="chest" aria-pressed="false">Chest</button>
         <button data-tool="erase" aria-pressed="false">Erase room</button>
       </div>
-      <p id="status" role="status">Select a room type, then click or tap a square.</p>
+      <h2>My Rooms</h2>
+<a href="./room-editor.html">Open Room Editor</a>
+<div class="saved-rooms" id="saved-rooms" role="group" aria-label="Saved room tools"></div>
+<button id="update-room" aria-pressed="false">Update from My Rooms</button>
+<p id="status" role="status">Select a room type, then click or tap a square.</p>
     </section>
     <section class="map" aria-label="Map">
       <div class="toolbar" role="group" aria-label="Layout actions">
@@ -79,10 +87,46 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
 <script>
 'use strict';
 const size = 14;
+const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+function readRoomLibrary(){
+  const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
+  if(stored===null) return {rooms:[],test:null};
+  if(!Array.isArray(stored.rooms)) throw new Error('Saved rooms could not be read.');
+  return stored;
+}
+function playableRoom(data){
+  if(data?.format!=='dungeon-room'||data.version!==1||data.width!==13||data.height!==13||
+    typeof data.name!=='string'||data.name.length>80||!Array.isArray(data.props)||data.props.length>169||
+    !Array.isArray(data.doorways)||data.doorways.length>48) throw new Error('Invalid room layout.');
+  const marked=new Set();
+  function reserve(x,y){
+    const key=y*13+x;
+    if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>=13||y>=13||marked.has(key))
+      throw new Error('A room item overlaps, or is outside the room.');
+    marked.add(key);
+  }
+  const doorways=data.doorways.map(({x,y})=>{
+    if(x!==0&&x!==12&&y!==0&&y!==12) throw new Error('Doorways belong on the room edge.');
+    reserve(x,y);
+    return {x,y};
+  });
+  const props=data.props.map(({type,x,y,rotation})=>{
+    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    for(let i=0;i<span;i++){
+      const offset=i-(type==='arched_entry'?1:0);
+      reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
+    }
+    return {type,x,y,rotation,width:rotation===0?span:1,height:rotation===90?span:1,cover,lootContainer,emitsLight};
+  });
+  return {format:'dungeon-room',version:1,width:13,height:13,name:data.name,doorways,props};
+}
+
 const rooms = {
   entrance: { label:'Entrance', mark:'E' }, chamber: { label:'Chamber', mark:'C' },
   hall: { label:'Hallway', mark:'H' }, storage: { label:'Storage', mark:'S' },
-  vault: { label:'Vault', mark:'V' }
+  vault: { label:'Vault', mark:'V' }, custom:{label:'Saved room',mark:'R'}
 };
 const grid = document.querySelector('#grid');
 const status = document.querySelector('#status');
@@ -94,6 +138,7 @@ const storageKey = 'dungeon-map-editor-v1';
 let layout = new Map();
 const history = [];
 let tool = 'chamber';
+let savedSource=null;
 let focusedCell = 0;
 const key = (x,y) => y * size + x;
 const setStatus = message => { status.textContent = message; };
@@ -111,7 +156,10 @@ function decode(data) {
         cells.has(key(room.x, room.y))) {
       throw new Error('The file contains an invalid or duplicate room.');
     }
-    cells.set(key(room.x,room.y), room);
+    if(room.type==='custom'){
+      const snapshot=playableRoom(room.snapshot);
+      cells.set(key(room.x,room.y),{x:room.x,y:room.y,chest:room.chest,type:'custom',sourceId:typeof room.sourceId==='string'?room.sourceId:null,snapshot});
+    } else cells.set(key(room.x,room.y),room);
   }
   return cells;
 }
@@ -145,8 +193,9 @@ function render() {
     button.dataset.chest = Boolean(room?.chest);
     button.dataset.east = Boolean(room && x < size - 1 && layout.has(index + 1));
     button.dataset.south = Boolean(room && layout.has(index + size));
-    button.textContent = room?.chest ? type.mark + ' ◆' : type?.mark ?? '';
-    const name = 'Column ' + (x + 1) + ', row ' + (y + 1) + ' · ' + (type?.label ?? 'Empty') +
+    const mark=room?.snapshot?.name?.trim().slice(0,2).toUpperCase()||type?.mark||'';
+    button.textContent = room?.chest ? mark + ' ◆' : mark;
+    const name = 'Column ' + (x + 1) + ', row ' + (y + 1) + ' · ' + (room?.snapshot?.name || type?.label || 'Empty') +
       (room?.chest ? ' with chest' : '');
     button.setAttribute('aria-label', name);
     button.title = name;
@@ -169,6 +218,19 @@ function remember() {
 }
 function place(index) {
   const existing = layout.get(index);
+  if(tool==='saved'||tool==='update'){
+    try{
+      const id=tool==='saved'?savedSource:existing?.sourceId;
+      const record=readRoomLibrary().rooms.find(room=>room.id===id);
+      if(!record) throw new Error(tool==='update'?'Select a placed room whose original is still in My Rooms.':'Select a room from My Rooms.');
+      const snapshot=playableRoom(record.room);
+      remember();
+      layout.set(index,{x:index%size,y:Math.floor(index/size),type:'custom',chest:existing?.chest??false,sourceId:id,snapshot});
+      setStatus(snapshot.name+(tool==='update'?' updated on the map.':' placed on the map.'));
+      persist();
+    }catch(error){setStatus(error.message);}
+    return;
+  }
   if (tool === 'chest' && !existing) {
     setStatus('Place a room before adding a chest.');
     return;
@@ -214,6 +276,8 @@ grid.addEventListener('keydown', event => {
 for (const button of tools) {
   button.addEventListener('click', () => {
     tool = button.dataset.tool;
+    savedSource=null;
+    refreshRoomPicker();
     for (const other of tools) other.setAttribute('aria-pressed', String(other === button));
     setStatus(tool === 'chest' ? 'Select a room to add or remove its chest.' :
       tool === 'erase' ? 'Select a room to erase it and its chest.' : 'Select a square to place ' + rooms[tool].label.toLowerCase() + '.');
@@ -255,6 +319,48 @@ file.onchange = async () => {
     setStatus(error instanceof SyntaxError ? 'The selected file is not valid JSON.' : error.message);
   }
 };
+const savedGroup=document.querySelector('#saved-rooms');
+const updateRoomButton=document.querySelector('#update-room');
+function refreshRoomPicker(){
+  updateRoomButton.setAttribute('aria-pressed',String(tool==='update'));
+  try{
+    const records=readRoomLibrary().rooms;
+    savedGroup.replaceChildren();
+    if(!records.length) savedGroup.textContent='Saved rooms will appear here.';
+    for(const record of records){
+      const room=playableRoom(record.room);
+      const button=document.createElement('button'), thumb=document.createElement('canvas');
+      thumb.width=thumb.height=39;
+      thumb.setAttribute('aria-hidden','true');
+      const ctx=thumb.getContext('2d');
+      ctx.fillStyle='#30271f';ctx.fillRect(0,0,39,39);
+      for(const prop of room.props){
+        ctx.fillStyle=prop.cover==='full'?'#bfac91':prop.cover==='soft'?'#9e75a6':'#9a7555';
+        const offset=prop.type==='arched_entry'?1:0;
+        ctx.fillRect(3*(prop.x-(prop.rotation===0?offset:0)),3*(prop.y-(prop.rotation===90?offset:0)),3*prop.width,3*prop.height);
+      }
+      ctx.fillStyle='#9ed19a';
+      for(const door of room.doorways) ctx.fillRect(door.x*3,door.y*3,3,3);
+      button.append(thumb,room.name);
+      button.setAttribute('aria-pressed',String(tool==='saved'&&savedSource===record.id));
+      button.onclick=()=>{
+        tool='saved';savedSource=record.id;
+        tools.forEach(other=>other.setAttribute('aria-pressed','false'));
+        refreshRoomPicker();
+        setStatus('Select a square to place '+room.name+'.');
+      };
+      savedGroup.append(button);
+    }
+  }catch{savedGroup.textContent='My Rooms could not be loaded.';}
+}
+updateRoomButton.onclick=()=>{
+  tool='update';savedSource=null;
+  tools.forEach(other=>other.setAttribute('aria-pressed','false'));
+  refreshRoomPicker();
+  setStatus('Select a placed room to replace its saved copy with the latest version.');
+};
+addEventListener('storage',event=>{if(event.key===ROOM_LIBRARY_KEY) refreshRoomPicker();});
+refreshRoomPicker();
 render();
 </script>
 </body>
