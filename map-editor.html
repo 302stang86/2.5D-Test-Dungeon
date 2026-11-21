@@ -5,37 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dungeon Map Editor</title>
 <style>
-:root { color-scheme:dark; font:16px system-ui,sans-serif; color:#f6e8d1; background:#171411; }
+:root { color-scheme:dark; font:16px system-ui,sans-serif; color:#cfd7f8; background:#120f19; }
 * { box-sizing:border-box; }
-body { margin:0; background:radial-gradient(ellipse at top,#38291d,transparent 52%); min-height:100vh; }
+body { margin:0; background:radial-gradient(ellipse at top,#251a3b,transparent 52%); min-height:100vh; }
 main { width:min(1040px,100%); padding:clamp(14px,3vw,32px); margin:auto; }
 header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
 h1 { font:bold clamp(28px,5vw,42px) Georgia,serif; margin:0; }
-a { color:#ebbc7d; }
-button { font:inherit; min-height:44px; padding:8px 12px; color:inherit; background:#30261e; border:1px solid #896f53; border-radius:6px; cursor:pointer; touch-action:manipulation; }
+a { color:#798fee; }
+button { font:inherit; min-height:44px; padding:8px 12px; color:inherit; background:#231b33; border:1px solid #5e4993; border-radius:6px; cursor:pointer; touch-action:manipulation; }
 button:disabled { opacity:.45; cursor:default; }
-button[aria-pressed=true] { background:#ebbb7c; color:#251a10; border-color:#ebbb7c; }
-button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-offset:2px; }
+button[aria-pressed=true] { background:#798eee; color:#170f26; border-color:#798eee; }
+button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-offset:2px; }
 .workspace { display:grid; grid-template-columns:205px minmax(0,1fr); align-items:start; gap:14px; }
-.tools,.map { background:#211b17; border:1px solid #67523f; border-radius:10px; padding:14px; }
+.tools,.map { background:#191424; border:1px solid #4a386e; border-radius:10px; padding:14px; }
 .palette,.toolbar { display:flex; gap:6px; flex-wrap:wrap; }
 .palette { display:grid; }
 .palette button { text-align:left; }
 .tools h2 { font-size:1rem; margin:0 0 8px; }
 .toolbar { margin-bottom:12px; }
-#status { min-height:2.75em; margin:10px 0 0; color:#e0c8a9; }
+#status { min-height:2.75em; margin:10px 0 0; color:#a2afe7; }
 .board { overflow:auto; padding:4px; }
 #grid { display:grid; grid-template-columns:repeat(14,minmax(36px,1fr)); width:max(100%, 530px); gap:2px; }
-.cell { position:relative; aspect-ratio:1; min-height:0; padding:0; border-radius:3px; border-color:#4d4035; background:#191613; color:#fff6e6; font-size:clamp(10px,2vw,14px); font-weight:bold; }
-.cell:hover { border-color:#f6d5a1; }
+.cell { position:relative; aspect-ratio:1; min-height:0; padding:0; border-radius:3px; border-color:#3b2f53; background:#14111b; color:#e9ecfc; font-size:clamp(10px,2vw,14px); font-weight:bold; }
+.cell:hover { border-color:#a3b2f4; }
 .cell:focus-visible { z-index:1; outline-offset:0; }
 .cell[data-room=entrance] { background:#3a5946; }
-.cell[data-room=chamber] { background:#674d37; }
+.cell[data-room=chamber] { background:#45326c; }
 .cell[data-room=hall] { background:#414d59; }
 .cell[data-room=storage] { background:#654842; }
 .cell[data-room=vault] { background:#634b70; }
-.cell[data-chest=true] { box-shadow:inset 0 0 0 2px #f0b54f; color:#ffe2a0; }
-.cell[data-east=true]::after,.cell[data-south=true]::before { content:""; position:absolute; background:#c9a271; z-index:1; pointer-events:none; }
+.cell[data-chest=true] { box-shadow:inset 0 0 0 2px #555dea; color:#aab8f5; }
+.cell[data-east=true]::after,.cell[data-south=true]::before { content:""; position:absolute; background:#676bd3; z-index:1; pointer-events:none; }
 .cell[data-east=true]::after { top:42%; right:-4px; width:6px; height:16%; }
 .cell[data-south=true]::before { left:42%; bottom:-4px; height:6px; width:16%; }
 @media(max-width:680px) {
@@ -51,12 +51,12 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
 .cell[data-objective=true] { outline:2px solid #7ec8ff; outline-offset:-3px; }
 .cell[data-target=true] { color:#ff9c8f; }
 .settings { margin-top:14px; display:grid; gap:8px; }
-.settings label { display:grid; gap:3px; font-size:.9rem; color:#e0c8a9; }
+.settings label { display:grid; gap:3px; font-size:.9rem; color:#a2afe7; }
 .settings label.check { display:flex; gap:8px; align-items:center; }
-.settings input[type=text],.settings input[type=number],.settings select,.settings textarea { font:inherit; color:inherit; background:#191613; border:1px solid #67523f; border-radius:6px; padding:6px 8px; min-height:36px; }
+.settings input[type=text],.settings input[type=number],.settings select,.settings textarea { font:inherit; color:inherit; background:#14111b; border:1px solid #4a386e; border-radius:6px; padding:6px 8px; min-height:36px; }
 .settings textarea { min-height:64px; resize:vertical; }
-.legend { font-size:.85rem; color:#cdb79b; margin:8px 0 0; line-height:1.4; }
-#report { white-space:pre-wrap; margin:10px 0 0; font-size:.9rem; color:#e0c8a9; }
+.legend { font-size:.85rem; color:#8f9dd9; margin:8px 0 0; line-height:1.4; }
+#report { white-space:pre-wrap; margin:10px 0 0; font-size:.9rem; color:#a2afe7; }
 </style>
 </head>
 <body>
@@ -419,9 +419,9 @@ function refreshRoomPicker(){
       thumb.width=thumb.height=39;
       thumb.setAttribute('aria-hidden','true');
       const ctx=thumb.getContext('2d');
-      ctx.fillStyle='#30271f';ctx.fillRect(0,0,39,39);
+      ctx.fillStyle='#231f3a';ctx.fillRect(0,0,39,39);
       for(const prop of room.props){
-        ctx.fillStyle=prop.cover==='full'?'#bfac91':prop.cover==='soft'?'#9e75a6':'#9a7555';
+        ctx.fillStyle=prop.cover==='full'?'#a9a6d6':prop.cover==='soft'?'#b47ec0':'#6f8fc4';
         const offset=prop.type==='arched_entry'?1:0;
         ctx.fillRect(3*(prop.x-(prop.rotation===0?offset:0)),3*(prop.y-(prop.rotation===90?offset:0)),3*prop.width,3*prop.height);
       }
