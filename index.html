@@ -515,6 +515,42 @@ const WALL_TYPES={
   full_stone:{span:1,height:3,thickness:.4},
   arched_entry:{span:3,height:3,thickness:.4,archWidth:1.8,archHeight:2.2}
 };
+const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+function readRoomLibrary(){
+  const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
+  if(stored===null) return {rooms:[],test:null};
+  if(!Array.isArray(stored.rooms)) throw new Error('Saved rooms could not be read.');
+  return stored;
+}
+function playableRoom(data){
+  if(data?.format!=='dungeon-room'||data.version!==1||data.width!==13||data.height!==13||
+    typeof data.name!=='string'||data.name.length>80||!Array.isArray(data.props)||data.props.length>169||
+    !Array.isArray(data.doorways)||data.doorways.length>48) throw new Error('Invalid room layout.');
+  const marked=new Set();
+  function reserve(x,y){
+    const key=y*13+x;
+    if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>=13||y>=13||marked.has(key))
+      throw new Error('A room item overlaps, or is outside the room.');
+    marked.add(key);
+  }
+  const doorways=data.doorways.map(({x,y})=>{
+    if(x!==0&&x!==12&&y!==0&&y!==12) throw new Error('Doorways belong on the room edge.');
+    reserve(x,y);
+    return {x,y};
+  });
+  const props=data.props.map(({type,x,y,rotation})=>{
+    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    for(let i=0;i<span;i++){
+      const offset=i-(type==='arched_entry'?1:0);
+      reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
+    }
+    return {type,x,y,rotation,width:rotation===0?span:1,height:rotation===90?span:1,cover,lootContainer,emitsLight};
+  });
+  return {format:'dungeon-room',version:1,width:13,height:13,name:data.name,doorways,props};
+}
+
 const FIELD_ROOM = {"doorways":[{"x":6,"y":0},{"x":12,"y":6},{"x":0,"y":6},{"x":6,"y":12}],"props":[{"type":"pillar","x":1,"y":1,"width":1,"height":1,"cover":"full"},{"type":"parapet","x":2,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":4,"y":1,"width":2,"height":1,"cover":"low"},{"type":"parapet","x":1,"y":2,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":1,"y":6,"width":1,"height":2,"cover":"low"},{"type":"parapet","x":4,"y":6,"width":1,"height":2,"cover":"low"},{"type":"bench","x":5,"y":6,"width":2,"height":1,"cover":"low"},{"type":"bench","x":4,"y":2,"width":2,"height":1,"cover":"low"},{"type":"armor-rack","x":9,"y":0,"width":1,"height":1,"cover":"full"},{"type":"crate-stack","x":10,"y":4,"width":1,"height":1,"cover":"full"}]};
 // Positions use the editor's zero-based tiles. The arch is anchored at its center.
 FIELD_ROOM.props.push(
@@ -522,26 +558,29 @@ FIELD_ROOM.props.push(
   {type:'arched_entry',x:8,y:3,width:3,height:1,cover:'full'},
   {type:'full_stone',x:10,y:3,width:1,height:1,cover:'full'}
 );
-function fieldRoomLayout(){
+function fieldRoomLayout(blueprint){
+  const doorwayLanes=[[],[],[],[]];
   const center={x:1,y:1,type:17,rot:0,ports:[]};
   const tiles=[center];
   const types=[7,1,16,3];
-  for(const {x,y} of FIELD_ROOM.doorways){
+  for(const {x,y} of blueprint.doorways){
     const direction=y===0?0:x===ROOM_SIZE-1?1:y===ROOM_SIZE-1?2:3;
     const [dx,dy]=DIRS[direction];
+    doorwayLanes[direction].push((direction%2===0?x:y)-ROOM_LEFT);
+    if(center.ports.includes(direction)) continue;
     center.ports.push(direction);
     tiles.push({x:center.x+dx,y:center.y+dy,type:types[direction],rot:0,ports:[(direction+2)%4]});
   }
-  return {tiles,rulingName:'Custom Room Field Test',vaultKey:roomKey(tiles[1])};
+  return {tiles,doorwayLanes,rulingName:'Custom Room Field Test',vaultKey:roomKey(tiles[1]??center)};
 }
-function placeFieldProps(left,top){
-  for(const prop of FIELD_ROOM.props){
+function placeFieldProps(left,top,blueprint){
+  for(const prop of blueprint.props){
     const centered=prop.type==='arched_entry';
     const x=left+prop.x+(centered?.5:prop.width/2),y=top+prop.y+(centered?.5:prop.height/2);
     const wall=WALL_TYPES[prop.type];
     if(wall){
       const parts=fieldPropParts(prop,x,y);
-      const vertical=prop.height>prop.width;
+      const vertical=prop.rotation===90||prop.height>prop.width;
       actors.push({kind:'furnishing',art:prop.type,x,y,height:CEILING_HEIGHT,
         halfX:(vertical?wall.thickness:wall.span)/2,halfY:(vertical?wall.span:wall.thickness)/2,
         parts,wallParts:parts.filter(part=>part.bottom===0)});
@@ -551,14 +590,20 @@ function placeFieldProps(left,top){
       actors.push({kind:'pillar',x,y,radius:.5,height:CEILING_HEIGHT});
       continue;
     }
+    if(prop.lootContainer){
+      actors.push({kind:'crate',x,y,height:.38,radius:.34,bandages:1});
+      continue;
+    }
     const parapet=prop.type==='parapet';
+    const solid=prop.cover!=='soft';
+    if(prop.emitsLight) ceilingLights.push({x,y,halfWidth:.28,halfLength:.28});
     actors.push({kind:'furnishing',art:prop.type,x,y,height:prop.cover==='low'?.38:.88,
       halfX:prop.width/2-(parapet?.04:.14),halfY:prop.height/2-(parapet?.04:.14),
-      parts:fieldPropParts(prop,x,y)});
+      parts:fieldPropParts(prop,x,y),walkThrough:!solid});
   }
 }
 function fieldPropParts(prop,x,y){
-  const vertical=prop.height>prop.width;
+  const vertical=prop.rotation===90||prop.height>prop.width;
   const box=(along,across,width,depth,bottom,height,color,material='')=>({
     x:x+(vertical?across:along),y:y+(vertical?along:across),
     halfX:(vertical?depth:width)/2,halfY:(vertical?width:depth)/2,
@@ -597,6 +642,13 @@ function fieldPropParts(prop,x,y){
       box(.02,-.07,.57,.49,.41,.88,[153,105,66],'wood')
     ];
   }
+  if(prop.type!=='armor-rack'){
+    const span=Math.max(prop.width,prop.height), height=prop.cover==='low'?.38:.88;
+    if(prop.cover==='soft') return [box(0,0,span*.83,.09,.08,.95,[113,58,70])];
+    const stone=['broken-column','sarcophagus','rubble','stalagmite','altar','pedestal'].includes(prop.type);
+    const iron=['iron-maiden','cauldron','unlit-brazier','lit-brazier','minecart'].includes(prop.type);
+    return [box(0,0,span*.72,.65,0,height,stone?[119,110,92]:iron?[87,90,94]:[139,93,56],stone?'stone':iron?'':'wood')];
+  }
   return [
     box(0,.12,.70,.45,0,.09,[116,79,51],'wood'),
     box(-.29,.20,.10,.12,.09,.82,[116,79,51],'wood'),
@@ -617,7 +669,14 @@ function restart() {
   const customTest=locationSelect.value==='room-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
   byId('acid-comparison').hidden=!fieldTest;
-  const layout = customTest ? fieldRoomLayout() : site ? generateDungeon(site) : rival();
+  let blueprint=FIELD_ROOM;
+  if(customTest){
+    try{
+      const saved=readRoomLibrary().test;
+      if(saved) blueprint=playableRoom(saved);
+    }catch{/* A damaged local save falls back to the built-in test room. */}
+  }
+  const layout = customTest ? fieldRoomLayout(blueprint) : site ? generateDungeon(site) : rival();
   const grid = new Map(layout.tiles.map(tile => [roomKey(tile),tile]));
   const originX = Math.min(...layout.tiles.map(t=>t.x));
   const originY = Math.min(...layout.tiles.map(t=>t.y));
@@ -644,7 +703,7 @@ function restart() {
     const style=trapName ?? (hall?'hall':ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
     const theme=themes[style] ?? themes.stone;
     roomThemes[t.y-originY][t.x-originX]=theme;
-    const roomName=customTest&&t===entrance ? 'Field Test Starting Room' : theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
+    const roomName=customTest&&t===entrance ? (blueprint.name||'Field Test Starting Room') : theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
     rooms.set(roomKey({x:cx,y:cy}),roomName);
     const n=hall ? ARCH_LEFT : ROOM_LEFT;
     const end=hall ? ARCH_RIGHT : ROOM_RIGHT;
@@ -658,14 +717,16 @@ function restart() {
           room[cy+dy*step+Math.abs(dx)*lane][cx+dx*step+Math.abs(dy)*lane]='.';
         }
       }
-      const archX=cx+dx*boundary, archY=cy+dy*boundary;
-      if(arches.has(cellKey(archX,archY))) continue;
-      const arch={axis:dx ? 'x' : 'y',x:archX+.5,y:archY+.5};
-      for(let lane=-ARCH_LEFT;lane<ARCH_RIGHT;lane++){
-        const col=archX+Math.abs(dy)*lane;
-        const rowIndex=archY+Math.abs(dx)*lane;
+      const lanes=customTest?layout.doorwayLanes[t===entrance?d:(d+2)%4]:
+        Array.from({length:ARCH_WIDTH},(_,i)=>i-ARCH_LEFT);
+      for(const lane of lanes){
+        const col=cx+dx*boundary+Math.abs(dy)*lane;
+        const rowIndex=cy+dy*boundary+Math.abs(dx)*lane;
+        const index=cellKey(col,rowIndex);
+        if(arches.has(index)) continue;
+        const arch={axis:dx?'x':'y',x:col+.5,y:rowIndex+.5};
         room[rowIndex][col]='A';
-        arches.set(cellKey(col,rowIndex),arch);
+        arches.set(index,arch);
       }
     }
 
@@ -677,7 +738,7 @@ function restart() {
     if(trapName){
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
-    if(customTest && t===entrance) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT);
+    if(customTest && t===entrance) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,blueprint);
     else decorateRoom(theme,x,y);
     if(hall){
       const alongX=!exits(t).some(direction=>direction%2===0);
@@ -694,7 +755,13 @@ function restart() {
   }
   const spawn=center(entrance);
   Object.assign(player,{x:spawn.x,y:spawn.y+.55,angle:-Math.PI/2});
-  if(customTest) Object.assign(player,{x:spawn.x,y:spawn.y+4,angle:-Math.PI/2});
+  if(customTest){
+    const candidates=Array.from({length:ROOM_SIZE**2},(_,i)=>({
+      x:spawn.x+i%ROOM_SIZE-ROOM_LEFT,y:spawn.y+Math.floor(i/ROOM_SIZE)-ROOM_LEFT
+    })).filter(point=>canStand(point.x,point.y)).sort((a,b)=>
+      Math.hypot(a.x-spawn.x,a.y-spawn.y-4)-Math.hypot(b.x-spawn.x,b.y-spawn.y-4));
+    if(candidates.length) Object.assign(player,candidates[0]);
+  }
   else actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
   if(fieldTest){
     const acid=actors.find(a=>a.kind==='trap'&&a.name==='acid');
@@ -703,7 +770,8 @@ function restart() {
   carriedWeapon=null;
   weaponEquipped=false;
   clearWeaponAction();
-  stockChests(customTest?center(layout.tiles[1]):spawn);
+  if(!customTest) stockChests(spawn);
+  else if(layout.tiles[1]) stockChests(center(layout.tiles[1]));
   pillars=actors.filter(a=>a.kind==='pillar');
   fieldCover=actors.filter(a=>a.halfX!==undefined);
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
@@ -716,7 +784,7 @@ function restart() {
   lastRender=undefined;
   byId('objective').textContent=customTest ? 'Custom Room Field Test · Test cover and movement in the starting room.' : fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
     `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
-  if(customTest) tell('Try the new stone arch north of the starting room center. Weapons are in the next room north.');
+  if(customTest) tell('Explore the saved room and test its layout.');
   else if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
   else tell(mobile.matches?'Use Interact to open crates and pick up weapons. Drag the view to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
@@ -796,6 +864,7 @@ function solid(x,y) {
   return cell === '#' || cell === 'W' || cell === 'B';
 }
 function blocksActor(a,x,y,r){
+  if(a.walkThrough) return false;
   if(a.wallParts) return a.wallParts.some(part=>blocksActor(part,x,y,r));
   if(a.halfX!==undefined){
     const dx=Math.max(0,Math.abs(a.x-x)-a.halfX),dy=Math.max(0,Math.abs(a.y-y)-a.halfY);
@@ -2549,6 +2618,10 @@ function frame(now) {
     renderMap(true);
   } else renderMap();
   requestAnimationFrame(frame);
+}
+if(new URLSearchParams(window.location.search).get('test-room')==='1'){
+  menuLocation.value='room-test';
+  startExpedition.onclick();
 }
 ctx.imageSmoothingEnabled=true;
 requestAnimationFrame(frame);
