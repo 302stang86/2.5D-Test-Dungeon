@@ -57,6 +57,34 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
 .settings textarea { min-height:64px; resize:vertical; }
 .legend { font-size:.85rem; color:#8f9dd9; margin:8px 0 0; line-height:1.4; }
 #report { white-space:pre-wrap; margin:10px 0 0; font-size:.9rem; color:#a2afe7; }
+
+@media(min-width:900px) and (min-height:520px) {
+ html,body { height:100%; overflow:hidden; }
+ body { min-height:0; }
+ main { width:100%; max-width:2000px; height:100vh; padding:10px 16px; display:flex; flex-direction:column; }
+ header { margin-bottom:8px; }
+ h1 { font-size:26px; }
+ button { min-height:34px; padding:4px 10px; }
+ .workspace { flex:1; min-height:0; grid-template-columns:210px minmax(0,1fr) 340px; align-items:stretch; }
+ .tools,.map,.side { min-height:0; overflow:auto; padding:10px; }
+ .side { background:#191424; border:1px solid #4a386e; border-radius:10px; }
+ .tools h2 { margin:0 0 6px; }
+ .palette { grid-template-columns:1fr 1fr; gap:4px; margin-bottom:8px; }
+ .palette button { padding:4px 8px; font-size:.9rem; }
+ .workspace { grid-template-columns:270px minmax(0,1fr) 330px; }
+ .settings input[type=text],.settings input[type=number],.settings select,.settings textarea { width:100%; min-width:0; }
+ .legend { font-size:.78rem; margin:4px 0 8px; }
+ .saved-rooms { max-height:22vh; margin-top:6px; }
+ #status { min-height:0; margin:6px 0 0; font-size:.85rem; }
+ .map { display:flex; flex-direction:column; overflow:hidden; }
+ .toolbar { margin-bottom:8px; flex:none; }
+ .board { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:center; overflow:auto; }
+ #grid { grid-template-columns:repeat(14,1fr); width:min(100%, calc(100vh - 168px)); }
+ .cell { font-size:clamp(9px,1.1vw,14px); }
+ .settings { margin-top:0; gap:6px; }
+ .settings textarea { min-height:52px; }
+ #report { margin:8px 0 0; font-size:.82rem; }
+}
 </style>
 </head>
 <body>
@@ -100,6 +128,11 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
         <button id="play">Test in game</button>
         <input id="file" type="file" accept=".json,application/json" hidden>
       </div>
+      <div class="board" tabindex="0" aria-label="Scrollable map board">
+        <div id="grid" role="group" aria-label="Dungeon map squares"></div>
+      </div>
+    </section>
+    <aside class="side" aria-label="Map settings panel">
       <div class="settings" role="group" aria-label="Map settings">
         <label>Map name<input type="text" id="m-name" maxlength="60"></label>
         <label>Briefing<textarea id="m-blurb" maxlength="240"></textarea></label>
@@ -121,10 +154,7 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
         <label>Weapon pickups<input type="number" id="m-weapons" min="0" max="6"></label>
       </div>
       <p id="report" role="status"></p>
-      <div class="board" tabindex="0" aria-label="Scrollable map board">
-        <div id="grid" role="group" aria-label="Dungeon map squares"></div>
-      </div>
-    </section>
+    </aside>
   </div>
 </main>
 <script>
