@@ -104,9 +104,12 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
         <label>Map name<input type="text" id="m-name" maxlength="60"></label>
         <label>Briefing<textarea id="m-blurb" maxlength="240"></textarea></label>
         <label>Theme<select id="m-theme">
-          <option value="crypt">Flooded Crypt (cold, wet)</option><option value="armory">Iron Armory (warm, soldiers)</option>
-          <option value="library">Sunken Library (violet, scholars)</option><option value="sewer">Blighted Sewer (green, vermin)</option>
-          <option value="keep">Throne Keep (red, royal guard)</option></select></label>
+          <option value="dungeon">Dungeon (stone, torchlight, cultists)</option>
+          <option value="office">Modern Office (drywall, desks, security)</option>
+          <option value="construction">Construction Zone (concrete, scaffolds, site crew)</option>
+          <option value="sewer">Sewer (brick, pipes, vermin)</option>
+          <option value="hospital">Abandoned Hospital (tile, gurneys, staff)</option>
+        </select></label>
         <label>Objective<select id="m-type">
           <option value="retrieve">Retrieve the main crate and escape</option><option value="eliminate">Eliminate targets</option>
           <option value="reach">Reach a location</option><option value="stealth">Eliminate targets unseen (strikes)</option></select></label>
@@ -205,11 +208,11 @@ function decode(data) {
   cells.meta=cleanMeta(data.meta);
   return cells;
 }
-const THEMES=['crypt','armory','library','sewer','keep'],OBJ_TYPES=['retrieve','eliminate','reach','stealth'],TRAPS=['spikes','gas','flame','acid'];
+const THEMES=['dungeon','office','construction','sewer','hospital'],LEGACY_THEMES={crypt:'dungeon',armory:'construction',library:'office',keep:'hospital'},OBJ_TYPES=['retrieve','eliminate','reach','stealth'],TRAPS=['spikes','gas','flame','acid'];
 function cleanMeta(m={}){
   const o=m.objective??{},type=OBJ_TYPES.includes(o.type)?o.type:'retrieve';
   return {name:String(m.name??'Untitled map').slice(0,60),blurb:String(m.blurb??'').slice(0,240),
-    theme:THEMES.includes(m.theme)?m.theme:'crypt',
+    theme:THEMES.includes(m.theme)?m.theme:(LEGACY_THEMES[m.theme]??'dungeon'),
     objective:{type,activate:!!o.activate,strikes:Math.max(1,Math.min(9,Math.round(Number(o.strikes))||3)),
       returnToExit:o.returnToExit??(type==='retrieve'||type==='eliminate'),alarm:o.alarm??(type==='retrieve')},
     lockedVault:!!m.lockedVault,weaponCount:Math.max(0,Math.min(6,Math.round(Number(m.weaponCount??2))||0)),

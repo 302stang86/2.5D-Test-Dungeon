@@ -466,7 +466,7 @@ let armor=0,looseAmmo=0,hasKey=false,alarm=false,hurtFlash=0,hurtDir=null,shake=
 let dotLeft=0,dotRate=0,alertLevel=0,stepTimer=0,summaryShown=false,guardCount=4,playerVisibility=1;
 let runStats={},discovered=new Set();
 let activeMap=null,mapTheme=null,objective=null,strikes=0,strikeCooldown=0,failReason='',objectiveDone=false;
-let ambientTint=[1,1,1],fogColor='10,13,19',drone=null;
+let themeBright=1,ambientTint=[1,1,1],fogColor='10,13,19',drone=null;
 const particles=[];
 const byId = id => document.getElementById(id);
 const mobile = matchMedia('(hover:none) and (pointer:coarse)');
@@ -549,16 +549,34 @@ const ROOM_STYLES={
   barracks:['#62584e','#7b6b5f','bunks'], mine:['#625c4a','#81745f','ore'],
   research:['#5b5953','#766d60','desk'], acid:['#444851','#797167',null],
   spikes:['#54535b','#776d6b','spikes'], gas:['#515a48','#75816b','vents'],
-  flame:['#694c43','#8b6c5c','brazier']
+  flame:['#694c43','#8b6c5c','brazier'],
+  office:['#5f6671','#8b8d92','desk'], cubicles:['#586270','#8d9096','cubicle'],
+  conference:['#4f5a66','#8b8f94','desk'], server:['#3f4752','#6f7580','filing'], corridor:['#565c66','#8d8f93',null],
+  siteoffice:['#6a6358','#8a8780','desk'], framing:['#7a756c','#8c8a84','scaffold'],
+  slab:['#77746e','#8d8b86','pallet'], yard:['#6e6a5f','#8c8a82','cones'], rawhall:['#6f6d68','#8b8984',null],
+  ward:['#7d8a88','#a9bbb6','gurney'], surgery:['#6b7f7e','#a4bcb8','ivstand'],
+  cliniclab:['#76868a','#a6b8ba','medcabinet'], pharmacy:['#72827c','#a3b6ad','medcabinet'], clinichall:['#74827f','#a7b7b2',null],
+  pump:['#434c3f','#5f6b55','valve'], tunnel:['#3f4a3e','#586750','pipes']
 };
 const ART_STYLE={
   'ruined-storage':'storage','dark-cell':'cell','cave-room':'cave','old-throne-room':'throne',
   'old-vault':'vault','old-kitchen':'kitchen','ruined-library':'library',armory:'armory',
   crypt:'crypt','flooded-chamber':'flooded','alchemy-lab':'arcane','torture-chamber':'torture',
-  chapel:'chapel',barracks:'barracks','collapsed-hall':'cave','rune-sanctum':'arcane'
+  chapel:'chapel',barracks:'barracks','collapsed-hall':'cave','rune-sanctum':'arcane',
+  'open-office':'office','cubicle-farm':'cubicles','conference-room':'conference','server-room':'server',
+  'site-office':'siteoffice','framing-bay':'framing','slab-floor':'slab','material-yard':'yard',
+  'patient-ward':'ward','operating-room':'surgery','clinic-lab':'cliniclab','pharmacy':'pharmacy',
+  'pump-room':'pump','outflow-tunnel':'tunnel'
 };
 const TYPE_STYLE=['throne','barracks','kitchen','armory','war','library','chapel','cave',
   'arcane','arcane','vault','torture','hall','hall','hall','hall','stone','entrance','mine','research'];
+// Every room in a themed map uses that theme's own room styles, so the entrance and vault match the rest.
+function themedStyle(base,t){
+  if(!mapTheme||mapTheme===MAP_THEMES.dungeon||!mapTheme.arts) return base;
+  const own=mapTheme.arts.map(a=>ART_STYLE[a]);
+  if(own.includes(base)||base===mapTheme.hallStyle||['acid','spikes','gas','flame'].includes(base)) return base;
+  return base==='entrance'?own[0]:own[mapHash(t.x,t.y,own.length)];
+}
 function themeAt(x,y){
   return roomThemes[Math.floor(y/ROOM_SPACING)]?.[Math.floor(x/ROOM_SPACING)] ?? themes.stone;
 }
@@ -810,6 +828,9 @@ function placeFieldProps(left,top,blueprint){
   }
 }
 function fieldPropParts(prop,x,y){
+  return fieldPropPartsBase(prop,x,y).map(part=>skinPart(part,prop.cover==='soft'));
+}
+function fieldPropPartsBase(prop,x,y){
   const vertical=prop.rotation===90||prop.height>prop.width;
   const box=(along,across,width,depth,bottom,height,color,material='')=>({
     x:x+(vertical?across:along),y:y+(vertical?along:across),
@@ -888,27 +909,42 @@ function fieldPropParts(prop,x,y){
 
 // ---- Mission themes: they change the look and the enemies, not the setting ----
 const MAP_THEMES={
-  crypt:{label:'Flooded Crypt',boss:'scout',arts:['crypt','flooded-chamber','dark-cell','cave-room'],hallStyle:'cave',
-    fog:'7,13,20',tint:[.92,1,1.1],guards:['scout','security','jester'],hpScale:1,
-    names:{scout:'Grave warden',security:'Crypt keeper',jester:'Gaunt acolyte'},
+  dungeon:{label:'Dungeon',boss:'scout',arts:['crypt','flooded-chamber','dark-cell','cave-room'],hallStyle:'cave',
+    fog:'7,13,20',tint:[.92,1,1.1],hpScale:1,skin:null,
+    names:{scout:'Grave warden',security:'Crypt keeper',jester:'Gaunt acolyte',officer:'Tomb guard',detective:'Bone reader'},
     weapons:['pistol','smg'],drone:[52,'sine']},
-  armory:{label:'Iron Armory',boss:'officer',arts:['armory','barracks','ruined-storage','old-kitchen'],hallStyle:'hall',
-    fog:'18,13,9',tint:[1.1,1,.9],guards:['officer','security','detective'],hpScale:1.1,
-    names:{officer:'Armory guard',security:'Siege sergeant',detective:'Quartermaster'},
+  office:{label:'Modern Office',boss:'detective',arts:['open-office','cubicle-farm','conference-room','server-room'],hallStyle:'corridor',
+    fog:'46,50,60',tint:[1.04,1.04,1.1],bright:1.6,hpScale:.95,flatWalls:true,
+    skin:{wood:[132,138,150],stone:[170,166,156],masonry:[196,192,180],iron:[66,72,86],cloth:[70,96,128]},
+    names:{detective:'Compliance auditor',officer:'Security guard',security:'Head of security',scout:'Courier',jester:'Office intern'},
+    weapons:['pistol','smg','ar15'],drone:[60,'triangle']},
+  construction:{label:'Construction Zone',boss:'officer',arts:['site-office','framing-bay','slab-floor','material-yard'],hallStyle:'rawhall',
+    fog:'44,38,28',tint:[1.1,1.05,.92],bright:1.35,hpScale:1.1,
+    skin:{wood:[196,152,92],stone:[150,148,142],masonry:[140,138,132],iron:[206,160,38],cloth:[220,110,40]},
+    names:{officer:'Site foreman',security:'Site guard',scout:'Rigger',detective:'Inspector',jester:'Apprentice'},
     weapons:['shotgun','ar15','ak47','smg'],drone:[70,'sawtooth']},
-  library:{label:'Sunken Library',boss:'detective',arts:['ruined-library','alchemy-lab','rune-sanctum','collapsed-hall'],hallStyle:'hall',
-    fog:'16,10,22',tint:[1.02,.95,1.1],guards:['detective','investigator','scout'],hpScale:.95,
-    names:{detective:'Archivist',investigator:'Scribe adept',scout:'Page'},
-    weapons:['pistol','smg'],drone:[44,'triangle']},
-  sewer:{label:'Blighted Sewer',boss:'jester',arts:['flooded-chamber','cave-room','collapsed-hall','ruined-storage'],hallStyle:'cave',
-    fog:'10,20,10',tint:[.92,1.1,.88],guards:['jester','scout','investigator'],hpScale:.9,
-    names:{jester:'Sewer rat',scout:'Gutter scout',investigator:'Warren boss'},
+  sewer:{label:'Sewer',boss:'jester',arts:['pump-room','outflow-tunnel','flooded-chamber','cave-room'],hallStyle:'tunnel',
+    fog:'10,20,10',tint:[.92,1.1,.88],bright:1.1,hpScale:.9,
+    skin:{wood:[92,88,62],stone:[86,98,74],masonry:[86,98,72],iron:[76,90,72],cloth:[70,84,56]},
+    names:{jester:'Sewer rat',scout:'Gutter scout',security:'Warren warden',officer:'Pipe boss',detective:'Drain inspector'},
     weapons:['pistol','shotgun'],drone:[38,'sine']},
-  keep:{label:'Throne Keep',boss:'security',arts:['old-throne-room','chapel','barracks','old-kitchen'],hallStyle:'hall',
-    fog:'20,12,12',tint:[1.08,.97,.94],guards:['officer','security','detective','scout'],hpScale:1.15,
-    names:{officer:'Royal guard',security:'Captain of the guard',detective:'Steward',scout:'Sentry'},
-    weapons:['pistol','ar15'],drone:[60,'triangle']}
+  hospital:{label:'Abandoned Hospital',boss:'security',arts:['patient-ward','operating-room','clinic-lab','pharmacy'],hallStyle:'clinichall',
+    fog:'30,48,44',tint:[.95,1.08,1.05],bright:1.5,hpScale:1.1,
+    skin:{wood:[206,210,210],stone:[188,198,196],masonry:[182,204,196],iron:[150,160,168],cloth:[130,190,180]},
+    names:{security:'Chief orderly',detective:'Doctor',officer:'Head nurse',scout:'Wandering patient',jester:'Escaped patient'},
+    weapons:['pistol','ar15','smg'],drone:[48,'triangle']}
 };
+// Maps saved with the earlier theme names still open.
+const LEGACY_THEMES={crypt:'dungeon',armory:'construction',library:'office',keep:'hospital'};
+const BASE_PART={wood:[139,93,56],stone:[119,110,92],masonry:[111,112,114],iron:[87,90,94]};
+function skinPart(part,soft){
+  const skin=mapTheme?.skin;
+  if(!skin) return part;
+  if(soft){ part.color=[...skin.cloth];return part; }
+  const kind=BASE_PART[part.material]?part.material:'iron';
+  part.color=part.color.map((c,i)=>Math.min(255,Math.round(c*skin[kind][i]/BASE_PART[kind][i])));
+  return part;
+}
 const OBJECTIVE_TYPES=['retrieve','eliminate','reach','stealth'];
 function normalizeObjective(o={}){
   const type=OBJECTIVE_TYPES.includes(o.type)?o.type:'retrieve';
@@ -949,7 +985,7 @@ function parseMap(data,id='map'){
   if(entrances.length!==1) throw new Error('A map needs exactly one entrance.');
   const m=data.meta??{};
   const meta={id,name:String(m.name||'Untitled map').slice(0,60),blurb:String(m.blurb||'').slice(0,240),
-    theme:Object.hasOwn(MAP_THEMES,m.theme)?m.theme:'crypt',objective:normalizeObjective(m.objective),
+    theme:Object.hasOwn(MAP_THEMES,m.theme)?m.theme:(LEGACY_THEMES[m.theme]??'dungeon'),objective:normalizeObjective(m.objective),
     lockedVault:!!m.lockedVault,weaponCount:Math.max(0,Math.min(6,Math.round(Number(m.weaponCount??2))||0)),
     guardCount:Math.max(1,Math.min(14,Math.round(Number(m.guardCount))||4)),
     blocked:Array.isArray(m.blocked)?m.blocked.filter(v=>typeof v==='string').slice(0,500):[]};
@@ -1127,6 +1163,7 @@ function registerStrike(guard){
 // ---- Theme: tint, fog, guard roster and a low ambient drone ----
 function applyTheme(){
   ambientTint=mapTheme?.tint??[1,1,1];
+  themeBright=mapTheme?.bright??1;
   fogColor=mapTheme?.fog??'10,13,19';
   updateDrone();
 }
@@ -1189,7 +1226,8 @@ function restart() {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const hall=t.type>=12 && t.type<=15;
     const trapName=t.dungeonTrap ?? (!site && !activeMap && t.type===16 && t.y===entrance.y-2 ? 'spikes' : null);
-    const style=trapName ?? (hall?(mapTheme?.hallStyle??'hall'):ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
+    const baseStyle=hall?(mapTheme?.hallStyle??'hall'):ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type];
+    const style=trapName ?? themedStyle(baseStyle,t);
     const theme=themes[style] ?? themes.stone;
     roomThemes[t.y-originY][t.x-originX]=theme;
     const roomName=customTest&&t===entrance ? (blueprint.name||'Field Test Starting Room') : theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
@@ -1519,12 +1557,19 @@ const WALL_DESIGNS=[
   ['Charred Ruin',            [88,84,83],   '#221d20','ashlar','voussoir','cracks'],
   ['Verdigris Bronze',        [87,134,117], '#243e38','largeBlock','ironArch','patina'],
   ['Ochre Ruin Masonry',      [158,132,85], '#483721','cobble','voussoir','moss'],
-  ['Midnight Slate',          [85,101,127], '#222937','thinSlate','stoneTrim','none']
+  ['Midnight Slate',          [85,101,127], '#222937','thinSlate','stoneTrim','none'],
+  ['Office Drywall',          [190,186,174],'#aaa698','plaster','stoneTrim','none'],
+  ['Raw Concrete',            [134,134,129],'#4a4a47','largeBlock','ironArch','bands'],
+  ['Clinic Tile',             [178,200,194],'#dbe8e4','thinSlate','stoneTrim','none']
 ].map(([name,base,mortar,pattern,arch,accent],index)=>({id:index+1,name,base,mortar,pattern,arch,accent}));
 const WALL_BY_ROOM={
   stone:1,hall:20,entrance:1,storage:19,cell:10,cave:6,throne:9,vault:7,
   kitchen:14,library:11,armory:12,war:5,crypt:4,flooded:8,arcane:13,torture:3,
-  chapel:16,barracks:5,mine:19,research:18,acid:2,spikes:3,gas:15,flame:17
+  chapel:16,barracks:5,mine:19,research:18,acid:2,spikes:3,gas:15,flame:17,
+  office:21,cubicles:21,conference:21,server:21,corridor:21,
+  siteoffice:22,framing:22,slab:22,yard:22,rawhall:22,
+  ward:23,surgery:23,cliniclab:23,pharmacy:23,clinichall:23,
+  pump:15,tunnel:15
 };
 const themes=Object.fromEntries(Object.entries(ROOM_STYLES).map(([id,[floorColor,wallColor,prop]])=>{
   const wallIndex=(WALL_BY_ROOM[id] ?? 1)-1;
@@ -1605,7 +1650,17 @@ const PROP_ART={
   desk:['#674f39','#c4b393',[[3,16,26,6],[6,22,4,8],[22,22,4,8],[9,12,13,5]]],
   spikes:['#4d4f55','#a0a5b1',[[2,24,28,6],[5,18,3,7],[11,16,3,9],[17,18,3,7],[23,16,3,9]]],
   vents:['#37463b','#7dab67',[[4,20,24,10],[7,22,3,5],[14,22,3,5],[21,22,3,5]]],
-  brazier:['#545057','#ff9c52',[[8,20,16,5],[13,24,6,6],[11,14,10,6],[14,7,5,9]]]
+  brazier:['#545057','#ff9c52',[[8,20,16,5],[13,24,6,6],[11,14,10,6],[14,7,5,9]]],
+  cubicle:['#5d6770','#a8b0b8',[[2,6,28,24],[3,8,26,18],[4,9,24,2],[6,14,8,5],[16,14,10,5],[10,22,12,2]]],
+  filing:['#555b63','#9aa2ab',[[7,3,18,27],[9,6,14,1],[9,13,14,1],[9,20,14,1],[13,9,6,2],[13,16,6,2],[13,23,6,2]]],
+  pallet:['#8a6a43','#c9a46a',[[2,22,28,7],[2,14,28,4],[4,10,24,4],[2,26,28,2],[6,18,3,5],[23,18,3,5]]],
+  scaffold:['#6e6f72','#d7c04a',[[3,4,3,26],[26,4,3,26],[3,6,26,2],[3,16,26,2],[3,26,26,2],[6,8,18,1]]],
+  cones:['#d9622b','#f1ead6',[[6,18,8,10],[18,14,9,14],[7,22,6,2],[19,19,7,2],[3,28,26,2]]],
+  pipes:['#4e5a47','#8ea07c',[[2,8,28,4],[2,16,28,4],[2,24,28,4],[8,4,3,26],[21,4,3,26]]],
+  valve:['#4a523e','#b24a3a',[[13,6,6,22],[8,8,16,3],[9,20,14,3],[12,3,8,3],[14,12,4,4]]],
+  gurney:['#7e8b8f','#dfe6e6',[[3,14,26,5],[5,10,22,5],[4,20,3,9],[25,20,3,9],[24,6,5,5]]],
+  medcabinet:['#7a8c88','#e4eeee',[[6,3,20,27],[8,6,7,10],[17,6,7,10],[8,19,16,8],[15,16,2,3]]],
+  ivstand:['#8a9294','#cbd7dc',[[15,4,3,24],[8,24,16,3],[11,3,10,3],[10,7,3,8],[19,7,3,8]]]
 };
 const roomProps=Object.fromEntries(Object.entries(PROP_ART).map(([id,[base,trim,shapes]])=>[id,surface(32,32,rect=>{
   shapes.forEach(([x,y,w,h],i)=>{
@@ -2426,7 +2481,7 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
       const index=(y*width+x)*4;
       const sample=((Math.floor(worldY*texScale)&255)*256+(Math.floor(worldX*texScale)&255))*4;
       const glow=cool*flicker;
-      const brightness=rowLight*(base+glow*.8)+flash;
+      const brightness=rowLight*(base+glow*.8)*themeBright+flash;
       data[index]=texture[sample]*brightness*ambientTint[0]+glow*6+flash*34;
       data[index+1]=texture[sample+1]*brightness*ambientTint[1]+glow*13+flash*20;
       data[index+2]=texture[sample+2]*brightness*ambientTint[2]+glow*22+flash*6;
@@ -2532,7 +2587,7 @@ function paintFieldProp(column,dx,dy,part,hit,wallDistance){
   ctx.fillRect(column,top,1,frontTop-top);
   ctx.fillStyle='#302821';
   ctx.fillRect(column,frontBottom,1,bottom-frontBottom);
-  if(part.material==='masonry'){
+  if(part.material==='masonry'&&!mapTheme?.flatWalls){
     const mortar='#414246', courseHeight=.19, pixel=Math.max(1,nearScale*.018);
     for(let course=0;course*courseHeight<CEILING_HEIGHT;course++){
       const line=horizon+(eyeHeight-course*courseHeight)*nearScale;
@@ -2588,7 +2643,7 @@ function renderFirstPerson(flicker) {
     }
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     const ceilingGlow=ceilingLightAt(hitX-dx*.02,hitY-dy*.02)*flicker;
-    const light=(hit.side==='x'?.5:.42)/(1+d*.22)+muzzleFlash*.55/(1+d*.4);
+    const light=(hit.side==='x'?.5:.42)*themeBright/(1+d*.22)+muzzleFlash*.55/(1+d*.4);
     ctx.fillStyle=`rgba(${fogColor},${Math.max(0,1-light-ceilingGlow*.33)})`;
     ctx.fillRect(x,top,1,h);
     {

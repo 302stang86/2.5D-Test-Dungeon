@@ -1,24 +1,24 @@
 {
  "maps": [
   {
-   "id": "flooded-crypt",
-   "file": "flooded-crypt.json"
+   "id": "dungeon-crypt",
+   "file": "dungeon-crypt.json"
   },
   {
-   "id": "iron-armory",
-   "file": "iron-armory.json"
+   "id": "construction-site",
+   "file": "construction-site.json"
   },
   {
-   "id": "sunken-archive",
-   "file": "sunken-archive.json"
+   "id": "office-tower",
+   "file": "office-tower.json"
   },
   {
    "id": "blighted-sewer",
    "file": "blighted-sewer.json"
   },
   {
-   "id": "throne-keep",
-   "file": "throne-keep.json"
+   "id": "abandoned-hospital",
+   "file": "abandoned-hospital.json"
   }
  ]
 }

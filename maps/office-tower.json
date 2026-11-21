@@ -1,0 +1,289 @@
+{
+ "version": 1,
+ "width": 14,
+ "height": 14,
+ "rooms": [
+  {
+   "x": 2,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1,
+   "target": true
+  },
+  {
+   "x": 4,
+   "y": 1,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 2,
+   "target": true
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 11,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 4,
+   "y": 3,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "type": "chamber",
+   "chest": false,
+   "trap": "acid",
+   "guards": 1
+  },
+  {
+   "x": 8,
+   "y": 3,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 3,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "type": "chamber",
+   "chest": true,
+   "guards": 2
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 11,
+   "y": 5,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1,
+   "target": true
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "type": "storage",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 9,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 10,
+   "type": "entrance",
+   "chest": false
+  }
+ ],
+ "meta": {
+  "name": "Downtown Office Tower",
+  "blurb": "Three executives are destroying evidence after hours. Find and eliminate each of them.",
+  "theme": "office",
+  "objective": {
+   "type": "eliminate",
+   "returnToExit": true,
+   "alarm": false
+  },
+  "lockedVault": false,
+  "weaponCount": 2,
+  "guardCount": 8,
+  "blocked": []
+ }
+}
