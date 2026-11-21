@@ -71,6 +71,7 @@ input, select { font:inherit; color:inherit; background:#14111b; border:1px soli
 .cell .prop-thumb[data-arch=true] { width:calc(300% + 8px); left:calc(-100% - 4px); }
 .cell .prop-thumb[data-arch=true][data-vertical=true] { transform-origin:center; transform:rotate(90deg); }
 #room-preview { grid-column:1 / -1; }
+.palette button[data-loot=true]::after { content:"Chest"; margin-left:auto; font-size:.7rem; color:#9ed19a; border:1px solid #4d7a58; border-radius:4px; padding:1px 5px; }
 @media(min-width:1180px) {
  main:has(#room-preview:not([hidden])) { width:min(1640px,100%); }
  .workspace:has(#room-preview:not([hidden])) { grid-template-columns:220px minmax(0,1fr) minmax(0,1fr); }
@@ -170,7 +171,7 @@ input, select { font:inherit; color:inherit; background:#14111b; border:1px soli
 'use strict';
 const size=13;
 const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
-const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"corner_wall":[3,"full",false,false],"corner_half":[3,"low",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
 function readRoomLibrary(){
   const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
   if(stored===null) return {rooms:[],test:null};
@@ -194,8 +195,14 @@ function playableRoom(data){
     return {x,y};
   });
   const props=data.props.map(({type,x,y,rotation})=>{
-    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const corner=type==='corner_wall'||type==='corner_half';
+    if(!Object.hasOwn(ROOM_SPECS,type)||!(corner?[0,90,180,270]:[0,90]).includes(rotation)) throw new Error('Invalid room prop.');
     const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    if(corner){
+      const [dx,dy]=[[1,1],[-1,1],[-1,-1],[1,-1]][rotation/90];
+      reserve(x,y);reserve(x+dx,y);reserve(x,y+dy);
+      return {type,x,y,rotation,width:2,height:2,cover,lootContainer,emitsLight};
+    }
     for(let i=0;i<span;i++){
       const offset=i-(type==='arched_entry'?1:0);
       reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
@@ -231,6 +238,8 @@ const props={
   window_wall:['Wall with Window','WW',WALL_TYPES.window_wall.span,'full'],
   wall_holes:['Wall with Holes','WH',WALL_TYPES.wall_holes.span,'full'],
   arched_entry:['Arched Entryway','AE',WALL_TYPES.arched_entry.span,'full'],
+  corner_wall:['Corner Wall','CW',3,'full'],
+  corner_half:['Corner Half Wall','CL',3,'low'],
   pillar:['Stone Pillar','PL',1,'full'],
   'broken-column':['Broken Column','BC',1,'low'],
   armoire:['Iron-Bound Armoire','AR',1,'full'],
@@ -351,7 +360,16 @@ const onGrid=(x,y)=>x>=0&&y>=0&&x<size&&y<size;
 const onEdge=(x,y)=>x===0||y===0||x===size-1||y===size-1;
 const validPoint=point=>point && Number.isInteger(point.x)&&Number.isInteger(point.y)&&onGrid(point.x,point.y);
 const say=message=>{status.textContent=message;};
+const isCorner=type=>type==='corner_wall'||type==='corner_half';
+const cornerDir=rotation=>[[1,1],[-1,1],[-1,-1],[1,-1]][(rotation/90)%4];
+function cornerThumb(type){
+  const full=type==='corner_wall',fill=full?'#8c88d8':'#6f8fc4';
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 46"><rect x="6" y="6" width="34" height="9" fill="'+fill+'" stroke="#dfe3ff" stroke-width="1.5"/><rect x="6" y="6" width="9" height="34" fill="'+fill+'" stroke="#dfe3ff" stroke-width="1.5"/><rect x="7" y="7" width="7" height="7" fill="'+(full?'#b9b4ff':'#9fb9e8')+'"/>'+(full?'':'<path d="M6 20h9M6 28h9M20 6v9M28 6v9" stroke="#dfe3ff" stroke-width="1.2"/>')+'</svg>';
+  return 'data:image/svg+xml,'+encodeURIComponent(svg);
+}
+const thumbSrc=(theme,type)=>isCorner(type)?cornerThumb(type):'data:image/webp;base64,'+(themeThumbs[theme]?.[type]??thumbnails[type]);
 function footprint({type,x,y,rotation}){
+  if(isCorner(type)){ const [dx,dy]=cornerDir(rotation); return [{x,y},{x:x+dx,y},{x,y:y+dy}]; }
   return Array.from({length:props[type][2]},(_,index)=>{
     const offset=index-(type==='arched_entry'?1:0);
     return {x:x+(rotation===0?offset:0),y:y+(rotation===90?offset:0)};
@@ -360,7 +378,7 @@ function footprint({type,x,y,rotation}){
 function encode(){
   return {format:'dungeon-room',version:1,width:size,height:size,name:name.value.trim()||'Untitled Room',theme:roomTheme,doorways:doors,props:items.map(item=>{
     const [, ,length,kind,loot=false,lit=false]=props[item.type];
-    return {...item,width:item.rotation===0?length:1,height:item.rotation===90?length:1,cover:kind,blocksMovement:kind!=='soft',lootContainer:loot,emitsLight:lit,
+    return {...item,width:isCorner(item.type)?2:(item.rotation===0?length:1),height:isCorner(item.type)?2:(item.rotation===90?length:1),cover:kind,blocksMovement:kind!=='soft',lootContainer:loot,emitsLight:lit,
       ...(WALL_TYPES[item.type]?{wall:WALL_TYPES[item.type]}:{})};
   })};
 }
@@ -377,7 +395,7 @@ function decode(data){
     return {x:point.x,y:point.y};
   });
   const items=data.props.map(item=>{
-    if(!validPoint(item)||!Object.hasOwn(props,item.type)||![0,90].includes(item.rotation)) throw new Error('Invalid prop.');
+    if(!validPoint(item)||!Object.hasOwn(props,item.type)||!(isCorner(item.type)?[0,90,180,270]:[0,90]).includes(item.rotation)) throw new Error('Invalid prop.');
     for(const tile of footprint(item)){
       const index=key(tile.x,tile.y);
       if(!onGrid(tile.x,tile.y)||occupied.has(index)) throw new Error('A prop overlaps another prop, doorway, or room edge.');
@@ -399,11 +417,14 @@ function propThumbnail(type){
   image.className='prop-thumb';
   image.alt='';
   image.draggable=false;
-  image.src='data:image/webp;base64,'+(themeThumbs[roomTheme]?.[type]??thumbnails[type]);
+  image.src=thumbSrc(roomTheme,type);
   return image;
 }
-const palette=Object.entries(props).map(([id])=>{
+const WALLISH=['full_stone','half_wall','window_wall','wall_holes','arched_entry','corner_wall','corner_half'];
+const paletteRank=id=>WALLISH.includes(id)?0:props[id][4]?1:2;
+const palette=Object.entries(props).sort((a,b)=>paletteRank(a[0])-paletteRank(b[0])).map(([id])=>{
   const button=document.createElement('button');
+  if(props[id][4]) button.dataset.loot='true';
   const text=document.createElement('span');
   text.textContent=propLabel(id);
   button.append(propThumbnail(id),text);
@@ -429,7 +450,7 @@ function setTheme(id,redraw=true){
   try{ localStorage.setItem(THEME_KEY,id); }catch{}
   palette.forEach(([type,button])=>{
     if(!props[type]) return;
-    button.querySelector('img').src='data:image/webp;base64,'+(themeThumbs[id]?.[type]??thumbnails[type]);
+    button.querySelector('img').src=thumbSrc(id,type);
     button.querySelector('span').textContent=propLabel(type);
   });
   tiles.forEach(tile=>{ tile.dataset.art=''; });
@@ -444,14 +465,14 @@ function updateTool(){
   rotateItem.disabled=!selected||moving;
   const prop=props[tool];
   byId('rotate').disabled=!prop;
-  byId('rotate').textContent=rotation===0?'Rotate to vertical':'Rotate to horizontal';
+  byId('rotate').textContent=isCorner(tool)?'Rotate corner ('+rotation+'°)':rotation%180===0?'Rotate to vertical':'Rotate to horizontal';
   byId('prop-info').textContent=prop?
-    (rotation===0?prop[2]+' × 1':'1 × '+prop[2])+' · '+cover[prop[3]]+(prop[4]?' · Loot container':'')+(prop[5]?' · Emits light':'')+(tool==='arched_entry'?' · Center anchor · Walk-through opening':''):
+    (isCorner(tool)?'L-shaped · 3 tiles (corner plus one tile each way)':rotation%180===0?prop[2]+' × 1':'1 × '+prop[2])+' · '+cover[prop[3]]+(prop[4]?' · Loot container':'')+(prop[5]?' · Emits light':'')+(tool==='arched_entry'?' · Center anchor · Walk-through opening':''):
     tool==='entrance'?'Select an empty tile along the room edge.':
     tool==='select'?(selected?propLabel(selected.type)+(moving?' · Choose a destination.':' selected.'):'Select any tile occupied by a prop.'):
     'Select any occupied tile to remove the whole prop or doorway.';
 }
-byId('rotate').onclick=()=>{rotation=rotation===0?90:0;touchIndex=null;render();};
+byId('rotate').onclick=()=>{rotation=isCorner(tool)?(rotation+90)%360:(rotation%180===0?90:0);touchIndex=null;render();};
 const tiles=Array.from({length:size*size},(_,index)=>{
   const button=document.createElement('button');
   button.className='cell';
@@ -467,7 +488,7 @@ function occupancy(){
 }
 function candidate(index){
   const coordinates={x:index%size,y:Math.floor(index/size)};
-  return moving?{...selected,...coordinates}:props[tool]?{type:tool,...coordinates,rotation}:null;
+  return moving?{...selected,...coordinates}:props[tool]?{type:tool,...coordinates,rotation:isCorner(tool)?rotation:rotation%180}:null;
 }
 function fits(item, occupied, ignore=null){
   return footprint(item).every(({x,y})=>onGrid(x,y)&&
@@ -477,11 +498,12 @@ function fits(item, occupied, ignore=null){
 function paintArt(button,item,preview=false){
   const image=propThumbnail(item.type);
   image.classList.add(preview?'preview-art':'placed-art');
-  const wide=props[item.type][2]>1;
+  const corner=isCorner(item.type),wide=!corner&&props[item.type][2]>1;
   image.dataset.arch=item.type==='arched_entry';
   image.dataset.wide=wide&&item.rotation===0;
   image.dataset.vertical=wide&&item.rotation===90;
-  image.dataset.turn=!wide&&item.rotation===90;
+  image.dataset.turn=!wide&&!corner&&item.rotation===90;
+  if(corner) image.style.transform='rotate('+item.rotation+'deg)';
   button.append(image);
 }
 function render(){
@@ -541,7 +563,7 @@ moveButton.onclick=()=>{
 };
 rotateItem.onclick=()=>{
   if(!selected||moving) return;
-  const next={...selected,rotation:selected.rotation===0?90:0};
+  const next={...selected,rotation:isCorner(selected.type)?(selected.rotation+90)%360:(selected.rotation===0?90:0)};
   if(!fits(next,occupancy(),selected)){say('There is not enough room to rotate this prop.');return;}
   replaceSelected(next,propLabel(next.type)+' rotated.');
 };
@@ -872,6 +894,19 @@ async function startRoomPreview(){
       group.position.set(item.x+.5-center+(item.rotation===0?offset:0),0,
         item.y+.5-center+(item.rotation===90?offset:0));
       group.rotation.y=-item.rotation*Math.PI/180;
+      if(isCorner(item.type)){
+        const [dx,dy]=cornerDir(item.rotation),full=item.type==='corner_wall',h=full?3:1.05,T=.4;
+        group.position.set(item.x+.5-center,0,item.y+.5-center);
+        group.rotation.y=0;
+        for(const [cx,cz,w,d] of [[dx*.65,0,1.7,T],[0,dy*.65,T,1.7]]){
+          const geometry=new THREE.BoxGeometry(w,h,d);
+          const uv=geometry.attributes.uv,scales=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+          for(let i=0;i<uv.count;i++){const [su,sv]=scales[Math.floor(i/4)];uv.setXY(i,uv.getX(i)*su*.8,uv.getY(i)*sv*.8);}
+          mesh(group,geometry,stoneMat,cx,h/2,cz);
+          if(!full) box(group,w+.08,.1,d+.08,0xa79a84,cx,h+.05,cz);
+        }
+        content.add(group); return;
+      }
       const wall=WALL_TYPES[item.type];
       const themed=THEME_MODELS[roomTheme]?.[item.type];
       if(themed){ themed(group,item); content.add(group); return; }

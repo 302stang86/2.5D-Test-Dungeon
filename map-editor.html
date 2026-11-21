@@ -99,7 +99,6 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
         <button data-tool="hall" aria-pressed="false">Hallway</button>
         <button data-tool="storage" aria-pressed="false">Storage</button>
         <button data-tool="vault" aria-pressed="false">Vault</button>
-        <button data-tool="chest" aria-pressed="false">Chest</button>
         <button data-tool="erase" aria-pressed="false">Erase room</button>
       </div>
       <h2>Mission</h2>
@@ -111,7 +110,7 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
         <button data-tool="wallEast" aria-pressed="false">Toggle wall east</button>
         <button data-tool="wallSouth" aria-pressed="false">Toggle wall south</button>
       </div>
-      <p class="legend">T trap · number is guards · star is a target room · flag is the objective room. A missing connector means a wall. A chamber next to a chamber is open unless you wall it.</p>
+      <p class="legend">T trap · number is guards · star is a target room · flag is the objective room · ◆ is a room with a chest (chests are placed in the Room Editor). A missing connector means a wall. A chamber next to a chamber is open unless you wall it.</p>
       <h2>My Rooms</h2>
 <a href="./room-editor.html">Open Room Editor</a>
 <div class="saved-rooms" id="saved-rooms" role="group" aria-label="Saved room tools"></div>
@@ -161,7 +160,7 @@ button:focus-visible, .board:focus-visible { outline:2px solid #9babf3; outline-
 'use strict';
 const size = 14;
 const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
-const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"corner_wall":[3,"full",false,false],"corner_half":[3,"low",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
 function readRoomLibrary(){
   const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
   if(stored===null) return {rooms:[],test:null};
@@ -185,8 +184,14 @@ function playableRoom(data){
     return {x,y};
   });
   const props=data.props.map(({type,x,y,rotation})=>{
-    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const corner=type==='corner_wall'||type==='corner_half';
+    if(!Object.hasOwn(ROOM_SPECS,type)||!(corner?[0,90,180,270]:[0,90]).includes(rotation)) throw new Error('Invalid room prop.');
     const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    if(corner){
+      const [dx,dy]=[[1,1],[-1,1],[-1,-1],[1,-1]][rotation/90];
+      reserve(x,y);reserve(x+dx,y);reserve(x,y+dy);
+      return {type,x,y,rotation,width:2,height:2,cover,lootContainer,emitsLight};
+    }
     for(let i=0;i<span;i++){
       const offset=i-(type==='arched_entry'?1:0);
       reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
@@ -270,29 +275,30 @@ const cells = Array.from({ length:size * size }, (_, index) => {
   return button;
 });
 
+const hasLoot=room=>Boolean(room&&(room.chest||room.snapshot?.props?.some(p=>p.lootContainer)));
 function render() {
   let chests = 0;
   cells.forEach((button, index) => {
     const x = index % size, y = Math.floor(index / size);
     const room = layout.get(index), type = room && rooms[room.type];
-    if (room?.chest) chests++;
+    if (hasLoot(room)) chests++;
     button.dataset.room = room?.type ?? '';
-    button.dataset.chest = Boolean(room?.chest);
+    button.dataset.chest = hasLoot(room);
     button.dataset.east = Boolean(room && x < size - 1 && layout.has(index + 1) && !meta.blocked.includes(linkId(index,index+1)));
     button.dataset.south = Boolean(room && layout.has(index + size) && !meta.blocked.includes(linkId(index,index+size)));
     button.dataset.trap = room?.trap ?? '';
     button.dataset.target = Boolean(room?.target);
     button.dataset.objective = Boolean(room?.objective);
     const mark=room?.snapshot?.name?.trim().slice(0,2).toUpperCase()||type?.mark||'';
-    button.textContent = mark+(room?.chest?' ◆':'')+(room?.trap?' T':'')+(room?.guards?' '+room.guards:'')+(room?.target?'★':'')+(room?.objective?'⚑':'');
+    button.textContent = mark+(hasLoot(room)?' ◆':'')+(room?.trap?' T':'')+(room?.guards?' '+room.guards:'')+(room?.target?'★':'')+(room?.objective?'⚑':'');
     const name = 'Column ' + (x + 1) + ', row ' + (y + 1) + ' · ' + (room?.snapshot?.name || type?.label || 'Empty') +
-      (room?.chest ? ' with chest' : '')+(room?.trap?', '+room.trap+' trap':'')+(room?.guards?', '+room.guards+' guards':'')+(room?.target?', target':'')+(room?.objective?', objective':'');
+      (hasLoot(room) ? ' with chest' : '')+(room?.trap?', '+room.trap+' trap':'')+(room?.guards?', '+room.guards+' guards':'')+(room?.target?', target':'')+(room?.objective?', objective':'');
     button.setAttribute('aria-label', name);
     button.title = name;
   });
   undo.disabled = history.length === 0;
   clear.disabled = layout.size === 0;
-  grid.setAttribute('aria-label', 'Dungeon map · ' + layout.size + ' rooms · ' + chests + ' chests');
+  grid.setAttribute('aria-label', 'Dungeon map · ' + layout.size + ' rooms · ' + chests + ' rooms with chests');
 }
 function persist() {
   layout.meta=meta;
@@ -344,18 +350,11 @@ function place(index) {
     meta={...meta,blocked:[...blocked]};
     setStatus(blocked.has(id)?'Wall placed.':'Wall removed.'); persist(); return;
   }
-  if (tool === 'chest' && !existing) {
-    setStatus('Place a room before adding a chest.');
-    return;
-  }
   if (tool === 'erase' && !existing || existing?.type === tool) return;
   remember();
   if (tool === 'erase') {
     layout.delete(index);
     setStatus('Room removed.');
-  } else if (tool === 'chest') {
-    layout.set(index, { ...existing, chest:!existing.chest });
-    setStatus(existing.chest ? 'Chest removed.' : 'Chest placed.');
   } else {
     layout.set(index, { x:index % size, y:Math.floor(index / size), type:tool, chest:existing?.chest ?? false });
     setStatus(rooms[tool].label + ' placed.');
@@ -393,8 +392,7 @@ for (const button of tools) {
     refreshRoomPicker();
     for (const other of tools) other.setAttribute('aria-pressed', String(other === button));
     setStatus(tool==='trap'?'Select a room to cycle its trap.':tool==='guard'?'Select a room to add guards (0 to 3).':tool==='target'?'Select a room whose first guard is a target.':tool==='objective'?'Select the room that holds the objective.':tool.startsWith('wall')?'Select a room to wall off or open the link to its neighbor.':
-      tool === 'chest' ? 'Select a room to add or remove its chest.' :
-      tool === 'erase' ? 'Select a room to erase it and its chest.' : 'Select a square to place ' + rooms[tool].label.toLowerCase() + '.');
+      tool === 'erase' ? 'Select a room to erase it.' : 'Select a square to place ' + rooms[tool].label.toLowerCase() + '.');
   });
 }
 undo.onclick = () => {
@@ -452,6 +450,11 @@ function refreshRoomPicker(){
       ctx.fillStyle='#231f3a';ctx.fillRect(0,0,39,39);
       for(const prop of room.props){
         ctx.fillStyle=prop.cover==='full'?'#a9a6d6':prop.cover==='soft'?'#b47ec0':'#6f8fc4';
+        if(prop.type==='corner_wall'||prop.type==='corner_half'){
+          const [dx,dy]=[[1,1],[-1,1],[-1,-1],[1,-1]][prop.rotation/90];
+          for(const [tx,ty] of [[prop.x,prop.y],[prop.x+dx,prop.y],[prop.x,prop.y+dy]]) ctx.fillRect(3*tx,3*ty,3,3);
+          continue;
+        }
         const offset=prop.type==='arched_entry'?1:0;
         ctx.fillRect(3*(prop.x-(prop.rotation===0?offset:0)),3*(prop.y-(prop.rotation===90?offset:0)),3*prop.width,3*prop.height);
       }
@@ -528,7 +531,7 @@ function validate(){
   if((t==='eliminate'||t==='stealth')&&!targets) notes.push('No target guards set. Every guard becomes a target.');
   if(!guardsTotal) notes.push('No guards placed. The game will use the default of 4 spread across rooms.');
   if(t==='stealth'&&guardsTotal<4) notes.push('A stealth map plays better with at least 4 guards.');
-  return {problems,notes,summary:`${byKey.size} rooms · ${guardsTotal} guards · ${targets} targets · ${rs.filter(r=>r.chest).length} chests`};
+  return {problems,notes,summary:`${byKey.size} rooms · ${guardsTotal} guards · ${targets} targets · ${rs.filter(hasLoot).length} rooms with chests`};
 }
 $('check').onclick=()=>{
   const v=validate();

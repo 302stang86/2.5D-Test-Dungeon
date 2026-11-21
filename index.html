@@ -728,7 +728,7 @@ function wallPieces(wall){
   return out;
 }
 const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
-const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"corner_wall":[3,"full",false,false],"corner_half":[3,"low",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
 function readRoomLibrary(){
   const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
   if(stored===null) return {rooms:[],test:null};
@@ -752,8 +752,14 @@ function playableRoom(data){
     return {x,y};
   });
   const props=data.props.map(({type,x,y,rotation})=>{
-    if(!Object.hasOwn(ROOM_SPECS,type)||![0,90].includes(rotation)) throw new Error('Invalid room prop.');
+    const corner=type==='corner_wall'||type==='corner_half';
+    if(!Object.hasOwn(ROOM_SPECS,type)||!(corner?[0,90,180,270]:[0,90]).includes(rotation)) throw new Error('Invalid room prop.');
     const [span,cover,lootContainer,emitsLight]=ROOM_SPECS[type];
+    if(corner){
+      const [dx,dy]=[[1,1],[-1,1],[-1,-1],[1,-1]][rotation/90];
+      reserve(x,y);reserve(x+dx,y);reserve(x,y+dy);
+      return {type,x,y,rotation,width:2,height:2,cover,lootContainer,emitsLight};
+    }
     for(let i=0;i<span;i++){
       const offset=i-(type==='arched_entry'?1:0);
       reserve(x+(rotation===0?offset:0),y+(rotation===90?offset:0));
@@ -797,8 +803,20 @@ function mapDoorLanes(a,b,d){
   }
   return Array.from({length:ARCH_WIDTH},(_,i)=>i-ARCH_LEFT);
 }
-function placeFieldProps(left,top,blueprint){
+function placeCornerWall(left,top,prop){
+  const half=prop.type==='corner_half';
+  const H=half?1.05*CEILING_HEIGHT/3:CEILING_HEIGHT, T=.4;
+  const [dx,dy]=[[1,1],[-1,1],[-1,-1],[1,-1]][prop.rotation/90];
+  const cx=left+prop.x+.5, cy=top+prop.y+.5;
+  for(const [x,y,hx,hy] of [[cx+dx*.65,cy,.85,T/2],[cx,cy+dy*.65,T/2,.85]]){
+    const part=skinPart({x,y,halfX:hx,halfY:hy,bottom:0,height:H,color:[111,112,114],material:'masonry'},false);
+    actors.push({kind:'furnishing',art:prop.type,x,y,height:H,halfX:hx,halfY:hy,parts:[part],wallParts:[part]});
+  }
+}
+function placeFieldProps(left,top,blueprint,keyed=false){
+  let keyPlaced=false;
   for(const prop of blueprint.props){
+    if(prop.type==='corner_wall'||prop.type==='corner_half'){ placeCornerWall(left,top,prop); continue; }
     const centered=prop.type==='arched_entry';
     const x=left+prop.x+(centered?.5:prop.width/2),y=top+prop.y+(centered?.5:prop.height/2);
     const wall=WALL_TYPES[prop.type];
@@ -816,7 +834,9 @@ function placeFieldProps(left,top,blueprint){
       continue;
     }
     if(prop.lootContainer){
-      actors.push({kind:'crate',x,y,height:.38,radius:.34,bandages:1});
+      const crate={kind:'crate',x,y,height:.38,radius:.34,bandages:1};
+      if(keyed&&!keyPlaced){ crate.key=true; keyPlaced=true; }
+      actors.push(crate);
       continue;
     }
     const parapet=prop.type==='parapet';
@@ -1026,7 +1046,7 @@ function mapLayout(def){
     }
   }
   if(dist.size!==def.rooms.length) throw new Error(`${def.rooms.length-dist.size} room(s) cannot be reached from the entrance.`);
-  const tiles=[],crateRooms=new Set(),posts=[];
+  const tiles=[],crateRooms=new Set(),lootRooms=new Set(),posts=[];
   const ordered=[entranceRoom,...def.rooms.filter(r=>r!==entranceRoom)];
   let objectiveRoom=def.rooms.find(r=>r.objective)??def.rooms.find(r=>r.type==='vault');
   if(!objectiveRoom) objectiveRoom=[...def.rooms].sort((a,b)=>dist.get(b.x+','+b.y)-dist.get(a.x+','+a.y))[0];
@@ -1049,6 +1069,7 @@ function mapLayout(def){
     else { tile.type=16;tile.dungeonArt=art; }
     if(r.snapshot) tile.snapshot=r.snapshot;
     if(r.chest) crateRooms.add(roomKey(r));
+    if(r.snapshot?.props.some(p=>p.lootContainer)) lootRooms.add(roomKey(r));
     if(r.guards>0) posts.push({x:r.x,y:r.y,count:r.guards,target:r.target});
     tiles.push(tile);
   }
@@ -1056,7 +1077,7 @@ function mapLayout(def){
   if(meta.objective.type==='retrieve') crateRooms.add(vaultKey);
   let keyKey=null;
   if(meta.lockedVault&&meta.objective.type==='retrieve'){
-    const pool=[...crateRooms].filter(k=>k!==vaultKey&&k!==roomKey(entranceRoom));
+    const pool=[...new Set([...crateRooms,...lootRooms])].filter(k=>k!==vaultKey&&k!==roomKey(entranceRoom));
     if(pool.length) keyKey=pool[Math.floor(Math.random()*pool.length)];
   }
   return {rulingName:meta.name,tiles,vaultKey,crateRooms,keyKey,posts};
@@ -1269,7 +1290,7 @@ function restart() {
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
     if(customTest && t===entrance) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,blueprint);
-    else if(t.snapshot) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,t.snapshot);
+    else if(t.snapshot) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,t.snapshot,key===layout.keyKey&&!layout.crateRooms?.has(key));
     else decorateRoom(theme,x,y);
     if(hall){
       const alongX=!exits(t).some(direction=>direction%2===0);
