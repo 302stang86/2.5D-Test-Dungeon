@@ -43,7 +43,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
   main:fullscreen { background:#100e0c; }
   .mobile-only { display:block; }
   .stage { position:absolute; inset:0; margin:0; border:0; border-radius:0; }
-  canvas { height:100%; object-fit:contain; }
+  canvas { width:100%; height:100%; aspect-ratio:auto; object-fit:fill; }
   .stage, .controls, .controls * {
     touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
   }
@@ -88,7 +88,6 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
     padding:0 2px; font-size:clamp(10px, 3dvh, 13px); line-height:1.05;
   }
   #weapon-toggle { grid-area:1 / 1; }
-  #punch { grid-area:1 / 2; width:100%; }
   #heal { grid-area:1 / 3; }
   #crouch { grid-area:2 / 1; }
   #reload { grid-area:2 / 3; }
@@ -98,7 +97,13 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
     touch-action:none; pointer-events:auto;
   }
   #joystick { position:absolute; left:var(--safe-left); bottom:var(--safe-bottom); }
-  #look-joystick { grid-area:2 / 2; }
+  #look-joystick { display:none; }
+  .controls .aim-cluster #punch { grid-area:1 / 2 / 3 / 3; height:100%; font-size:clamp(13px,3.6dvh,17px); }
+  #aim-lock {
+    left:calc(var(--safe-left) + var(--stick-size) + 8px); bottom:calc(var(--safe-bottom) + var(--stick-size) - 6px);
+    width:clamp(52px,15dvh,64px); height:clamp(52px,15dvh,64px); min-width:0; border-radius:50%;
+  }
+  #aim-lock[aria-pressed=true] { color:#1b1510; background:#ff8f6a; border-color:#ffd0bd; }
   .touch-stick span { position:absolute; pointer-events:none; line-height:1; }
   .touch-stick .up { top:4%; left:50%; transform:translateX(-50%); }
   .touch-stick .down { bottom:4%; left:50%; transform:translateX(-50%); }
@@ -179,7 +184,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
       <p>Recover the main supply crate and return to the entrance. Taking it sounds the alarm.</p>
       <p class="desktop-help">Use WASD to move, drag to aim, F to interact, Space or click to attack, G to equip or stow, R to reload, and H to use a bandage. Press Esc to return to the menu. Find the vault key where one exists, recover the main crate, then get out before the guards close in.</p>
       <p class="desktop-help">Hold C to crouch: you move slower, guards notice you later, and you can disarm traps with F. Press M to mute.</p>
-      <p class="touch-help">Play in landscape. Move with the left stick. Use the right stick to turn. Small movements help you aim. Hold Crouch to stay low and stationary while you use the action buttons.</p>
+      <p class="touch-help">Play in landscape. Move with the left stick. Drag anywhere on the view to look around. Hold Aim to lock onto the nearest enemy. Hold Crouch to stay low and stationary while you use the action buttons.</p>
     </details>
     <!-- DEV:START html (remove through DEV:END after field testing) -->
     <details id="dev-menu" class="dev-menu">
@@ -236,11 +241,8 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 <button data-hold="s" aria-label="Move backward">↓</button>
 <button data-hold="e" aria-label="Turn right">↷</button>
 <button id="interact">Interact</button>
+<button class="mobile-only" id="aim-lock" aria-pressed="false" aria-label="Hold to lock onto the nearest enemy">Aim</button>
 <div class="aim-cluster">
-<div class="mobile-only touch-stick" id="look-joystick" role="img" aria-label="Turning joystick">
-<span class="left" aria-hidden="true">←</span><span class="right" aria-hidden="true">→</span>
-<span class="knob"></span>
-</div>
 <button class="mobile-only" id="crouch" aria-pressed="false">Crouch</button>
 <button id="punch">Punch</button> <button id="weapon-toggle" disabled>Equip weapon</button> <button id="reload" disabled>Reload</button>
 <button id="heal">Use bandage</button>
@@ -442,10 +444,23 @@ const canvas = document.querySelector('#view');
 const desktop=globalThis.matchMedia?.('(min-width: 900px) and (pointer: fine)').matches;
 if(desktop){ canvas.width=640; canvas.height=400; }
 const ctx = canvas.getContext('2d');
-const width = canvas.width, height = canvas.height, horizon = height / 2;
-const focal = width / (2 * Math.tan(Math.PI / 5));
-const depth = new Float32Array(width);
-const planes = ctx.createImageData(width, height);
+let width, height, horizon, focal, depth, planes;
+// The view always fills the screen. Height is fixed, width follows the screen shape, and the vertical field of view stays constant so a wider screen shows more to the left and right.
+function resizeCanvas(){
+  if(!desktop){
+    const long=Math.max(innerWidth,innerHeight),short=Math.max(1,Math.min(innerWidth,innerHeight));
+    const aspect=Math.max(1.5,Math.min(2.4,long/short));
+    canvas.height=240;
+    canvas.width=Math.round(240*aspect/2)*2;
+  }
+  width=canvas.width;height=canvas.height;horizon=height/2;
+  focal=height*1.1;
+  depth=new Float32Array(width);
+  planes=ctx.createImageData(width,height);
+  ctx.imageSmoothingEnabled=true;
+  mapLayers?.clear?.();
+}
+resizeCanvas();
 const buttons = [...document.querySelectorAll('[data-hold]')];
 const keys = new Set();
 const held = new Map();
@@ -467,7 +482,7 @@ let expeditionStarted=false;
 const canResume=()=>expeditionStarted && !defeated && !escaped;
 const crouch=byId('crouch');
 const movementStick=bindTouchStick(byId('joystick'));
-const turningStick=bindTouchStick(byId('look-joystick'),true);
+const turningStick={x:0,y:0,reset(){}};
 let crouchPointer;
 const gamePaused = () => main.hidden || (mobile.matches && (portrait.matches || main.classList.contains('menu-open')));
 const tell = message => { byId('message').textContent = message; };
@@ -1245,7 +1260,7 @@ function restart() {
   else if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
   else if(activeMap?.meta.blurb) tell(activeMap.meta.blurb);
   else tell(site?.locked ? 'A key is hidden somewhere in this dungeon. The main crate is locked.' :
-    mobile.matches?'Use Interact to open crates and pick up weapons. Use the right stick to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
+    mobile.matches?'Use Interact to open crates and pick up weapons. Drag the view to look around.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
 
 function targetActor(kinds,range=1.65,requireFacing=true) {
@@ -1553,10 +1568,10 @@ const GUARD_RAYS=32;
 const GUARD_DAMAGE={pistol:24,shotgun:55,ar15:25,ak47:30,smg:17};
 // profile: hp, vision range, patrol and chase speed, melee damage, and optional ranged attack.
 const NPC_ROSTER=[
-  ['scout','Hooded scout','#485345',{hp:60,range:10,patrol:1.6,chase:2.9,melee:9,ranged:null}],
-  ['jester','Jester','#842944',{hp:50,range:7,patrol:1.7,chase:3.1,melee:8,ranged:null}],
+  ['scout','Hooded scout','#485345',{hp:60,range:10,patrol:1.6,chase:2.9,melee:9,ranged:{dmg:5,range:8,interval:2.1}}],
+  ['jester','Jester','#842944',{hp:50,range:7,patrol:1.7,chase:3.1,melee:8,ranged:{dmg:5,range:7,interval:2.0}}],
   ['officer','Patrol officer','#273e59',{hp:85,range:8,patrol:1.45,chase:2.4,melee:12,ranged:{dmg:7,range:6.5,interval:1.7}}],
-  ['security','Security officer','#558db7',{hp:120,range:8,patrol:1.2,chase:2.0,melee:14,ranged:null}],
+  ['security','Security officer','#558db7',{hp:120,range:8,patrol:1.2,chase:2.0,melee:14,ranged:{dmg:8,range:7,interval:2.2}}],
   ['detective','Detective','#3e424b',{hp:75,range:9,patrol:1.45,chase:2.4,melee:10,ranged:{dmg:9,range:7.5,interval:1.5}}],
   ['investigator','Investigator','#585156',{hp:70,range:11,patrol:1.45,chase:2.5,melee:10,ranged:{dmg:6,range:7,interval:1.3}}]
 ];
@@ -1746,6 +1761,87 @@ function separateActors(){
     }
   }
 }
+// ---- Combat: take cover, wait crouched, step out, fire a short burst, return ----
+function lineClear(ox,oy,tx,ty,h=STANDING_EYE_HEIGHT){
+  const dx=tx-ox,dy=ty-oy,d=Math.hypot(dx,dy),origin={x:ox,y:oy};
+  if(d<.05) return true;
+  if(cast(dx,dy,null,origin).distance<d-.3) return false;
+  if(tracePillar(dx,dy,pillars,d-.3,origin)) return false;
+  return coverLimit(dx,dy,d,origin,h)>=d-.3;
+}
+function nearbyCell(guard,radius,test){
+  const gx=Math.floor(guard.x),gy=Math.floor(guard.y);
+  let best=null,bestDistance=1e9;
+  for(let dy=-radius;dy<=radius;dy++) for(let dx=-radius;dx<=radius;dx++){
+    const x=gx+dx,y=gy+dy,d=Math.abs(dx)+Math.abs(dy);
+    if(d>=bestDistance||!guardFloor[y]?.[x]) continue;
+    if(test(x+.5,y+.5)){ best={x,y};bestDistance=d; }
+  }
+  return best;
+}
+function guardShoot(guard,pd){
+  guard.shotCooldown=guard.ranged.interval*(.85+Math.random()*.3);
+  shootAtPlayer(guard,pd);
+}
+function guardCombat(guard,dt,pd,pdx,pdy,sees){
+  const r=guard.ranged;
+  const c=guard.combat??(guard.combat={state:'engage',timer:0,cover:null,shots:0,tried:0,walk:0});
+  c.tried=Math.max(0,c.tried-dt);
+  if(sees) guard.angle=Math.atan2(pdy,pdx);
+  else if(guard.lastSeen) guard.angle=Math.atan2(guard.lastSeen.y-guard.y,guard.lastSeen.x-guard.x);
+  const go=cell=>{ setGuardPath(guard,cellKey(cell.x,cell.y));c.walk=0; };
+  const walk=()=>{ c.walk+=dt;return followGuardPath(guard,dt,guard.chaseSpeed*(alarm?1.12:1)); };
+  const clear=()=>lineClear(guard.x,guard.y,player.x,player.y,eyeHeight);
+  const lose=()=>{ guard.combat=null;guard.height=.85;guard.shotCooldown=Math.max(guard.shotCooldown,.8);return false; }; // player hid or left the view cone: stop firing and search
+  switch(c.state){
+    case 'engage': {
+      guard.height=.85;
+      if(c.tried===0){
+        c.tried=2.5;
+        const cell=nearbyCell(guard,7,(x,y)=>Math.hypot(x-player.x,y-player.y)>3&&!lineClear(x,y,player.x,player.y));
+        if(cell){ c.cover=cell;c.state='toCover';go(cell);return true; }
+      }
+      if(!sees) return lose();
+      if(pd>r.range) return false;
+      if(guard.shotCooldown===0&&clear()) guardShoot(guard,pd);
+      return true;
+    }
+    case 'toCover': {
+      guard.height=.85;
+      const done=!walk();
+      if(done||c.walk>6){ c.state='hold';c.timer=1.3+Math.random()*1.4;guard.moving=false; }
+      return true;
+    }
+    case 'hold': {
+      guard.height=.6;
+      c.timer-=dt;
+      if(clear()){ c.state='engage';c.tried=0; return true; } // flanked
+      if(c.timer<=0){
+        const peek=nearbyCell(guard,4,(x,y)=>{ const d=Math.hypot(x-player.x,y-player.y);return d>=3&&d<=r.range&&lineClear(x,y,player.x,player.y,eyeHeight); });
+        if(peek){ c.state='toPeek';go(peek); } else { c.state='engage';c.tried=0; }
+      }
+      return true;
+    }
+    case 'toPeek': {
+      guard.height=.85;
+      const done=!walk();
+      if(!clear()&&(done||c.walk>4)) return lose();
+      if((done&&c.walk>.1)||c.walk>4||(clear()&&c.walk>.3)){ c.state='fire';c.shots=2+(Math.random()<.5?1:0);c.timer=.4;guard.moving=false; }
+      return true;
+    }
+    case 'fire': {
+      guard.height=.85;
+      c.timer-=dt;
+      if(c.timer<=0&&c.shots>0){
+        if(sees&&clear()){ guardShoot(guard,pd);c.shots--;c.timer=r.interval*.45; }
+        else return lose();
+      }
+      if(c.shots<=0&&c.timer<=0){ c.state=c.cover?'toCover':'engage';if(c.cover) go(c.cover); }
+      return true;
+    }
+  }
+  return false;
+}
 function updateGuard(guard,dt){
   guard.moving=false;
   guard.hitFlash=Math.max(0,guard.hitFlash-dt);
@@ -1788,6 +1884,7 @@ function updateGuard(guard,dt){
   if(pd<14&&pd>.05&&cast(pdx,pdy).distance>=1) guard.mapSeen=1.5;
   const speedMul=alarm?1.12:1;
   if(guard.mode==='patrol'){
+    guard.combat=null;guard.height=.85;
     if(sees) guard.angle=Math.atan2(pdy,pdx);
     else if(guard.wait>0) guard.wait=Math.max(0,guard.wait-dt);
     else if(!followGuardPath(guard,dt,guard.patrolSpeed*speedMul)){
@@ -1807,12 +1904,8 @@ function updateGuard(guard,dt){
         tell(`${guard.name} struck you.`);
         hurt(guard.melee,guard);
       }
-    } else if(guard.ranged && aware && pd<=guard.ranged.range && pd>2.4){
-      guard.angle=Math.atan2(pdy,pdx);
-      if(guard.shotCooldown===0){
-        guard.shotCooldown=guard.ranged.interval*(.85+Math.random()*.3);
-        shootAtPlayer(guard,pd);
-      }
+    } else if(guard.ranged && pd>2.4 && pd<=guard.ranged.range+3 && (aware || (guard.combat&&guard.combat.state!=='engage')) && guardCombat(guard,dt,pd,pdx,pdy,sees)){
+      if(guard.mode==='search') guard.search=Math.max(guard.search,3);
     } else {
       if(guard.repath===0){
         setGuardPath(guard,cellKey(Math.floor(target.x),Math.floor(target.y)));
@@ -2787,7 +2880,8 @@ function drawWeaponModel(item,light,warmth){
   const sway=Math.sin(viewmodel.bobPhase*.5)*viewmodel.walkSway*4;
   const bob=Math.cos(viewmodel.bobPhase)*viewmodel.walkSway*2;
   ctx.save();
-  ctx.scale(width/480,height/300);
+  ctx.translate((width-480*height/300)/2,0);
+  ctx.scale(height/300,height/300);
   ctx.translate(353+sway+kick*.45,244+bob-kick*.62+reload*24);
   ctx.rotate(-kick*.005+reload*.19);
   const end=-spec.length, top=-48;
@@ -2894,7 +2988,8 @@ function drawParticles(fx,fy,rx,ry){
 }
 function drawHud(){
   ctx.save();
-  ctx.scale(width/480,height/300);
+  ctx.translate((width-480*height/300)/2,0);
+  ctx.scale(height/300,height/300);
   if(hurtFlash>0){
     const a=Math.min(.6,hurtFlash*1.2);
     const g=ctx.createRadialGradient(240,150,95,240,150,285);
@@ -3005,7 +3100,7 @@ byId('summary-again').onclick=()=>{ restart();setMenu(false); };
 byId('summary-menu').onclick=()=>showMainMenu();
 
 function drawCrosshair(){
-  const scale=width/480,x=width/2,y=height/2;
+  const scale=height/300,x=width/2,y=height/2;
   ctx.beginPath();
   ctx.arc(x,y,5.5*scale,0,Math.PI*2);
   for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
@@ -3031,7 +3126,7 @@ function mapKnows(actor){
   return discovered.has(blockKey(actor.x,actor.y));
 }
 function renderMap(mini=false) {
-  const size=Math.min(mini ? 7 : 23,(mini ? 158 : height-12)/Math.max(room.length,room[0].length));
+  const size=Math.min(mini ? (height<300?4.4:7) : 23,(mini ? (height<300?100:158) : height-12)/Math.max(room.length,room[0].length));
   const left=mini ? 9 : (width-room[0].length*size)/2;
   const top=mini ? 9 : (height-room.length*size)/2;
   let layer=mapLayers.get(mini);
@@ -3171,6 +3266,7 @@ function clearInput(){
   drag=undefined;
   movementStick.reset();
   turningStick.reset();
+  clearAim();
   stand();
 }
 addEventListener('blur',clearInput);
@@ -3299,7 +3395,7 @@ canvas.addEventListener('pointermove',event => {
   if (drag?.id !== event.pointerId) return;
   const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
   drag.travel+=Math.hypot(dx,dy);
-  if(!drag.mouse || drag.travel>=4) player.angle+=dx*(drag.mouse?.008:.004);
+  if(!drag.mouse || drag.travel>=4) player.angle+=dx*(drag.mouse?.008:.0065);
   drag.x=event.clientX;drag.y=event.clientY;
 });
 for (const type of ['pointerup','pointercancel','lostpointercapture']) {
@@ -3354,6 +3450,42 @@ function updateWorld(dt,travelled){
   }
   if((escaped||defeated)&&!summaryShown){ summaryShown=true;updateDrone();showSummary(); }
 }
+let lockTarget=null,aimPointer;
+const aimButton=byId('aim-lock');
+function clearAim(){ aimPointer=undefined;lockTarget=null;aimButton.setAttribute('aria-pressed','false'); }
+aimButton.addEventListener('pointerdown',event=>{
+  if(!mobile.matches||gamePaused()||aimPointer!==undefined) return;
+  event.preventDefault();
+  aimButton.setPointerCapture(event.pointerId);
+  aimPointer=event.pointerId;
+  aimButton.setAttribute('aria-pressed','true');
+});
+for(const type of ['pointerup','pointercancel','lostpointercapture'])
+  aimButton.addEventListener(type,event=>{ if(event.pointerId===aimPointer) clearAim(); });
+function guardVisible(guard){
+  const dx=guard.x-player.x,dy=guard.y-player.y,d=Math.hypot(dx,dy);
+  if(d>13) return false;
+  if(cast(dx,dy).distance<d-.3) return false;
+  return !tracePillar(dx,dy,pillars,d-.3);
+}
+function pickLockTarget(){
+  let best=null,bestScore=1e9;
+  for(const guard of guards){
+    if(guard.done||!guardVisible(guard)) continue;
+    const off=Math.abs(Math.atan2(Math.sin(Math.atan2(guard.y-player.y,guard.x-player.x)-player.angle),Math.cos(Math.atan2(guard.y-player.y,guard.x-player.x)-player.angle)));
+    if(off>1.3) continue;
+    const score=off*6+Math.hypot(guard.x-player.x,guard.y-player.y)*.4;
+    if(score<bestScore){ best=guard;bestScore=score; }
+  }
+  return best;
+}
+function autoAim(dt){
+  if(!lockTarget||lockTarget.done||!guardVisible(lockTarget)) lockTarget=pickLockTarget();
+  if(!lockTarget) return;
+  const want=Math.atan2(lockTarget.y-player.y,lockTarget.x-player.x);
+  const diff=Math.atan2(Math.sin(want-player.angle),Math.cos(want-player.angle));
+  player.angle+=diff*Math.min(1,dt*12);
+}
 function frame(now) {
   const dt = Math.min(.033,(now-(previous ?? now))/1000);
   previous = now;
@@ -3363,6 +3495,7 @@ function frame(now) {
   }
   const keyboardTurn=Number(down('e') || down('arrowright'))-Number(down('q') || down('arrowleft'));
   const aim=turningStick.x;
+  if((aimPointer!==undefined||down('z'))&&!defeated&&!escaped) autoAim(dt); else lockTarget=null;
   player.angle+=dt*(keyboardTurn*2.4 + aim*Math.abs(aim)*2.65);
   const forward=Number(down('w') || down('arrowup'))-Number(down('s') || down('arrowdown'))-movementStick.y;
   const strafe=Number(down('d'))-Number(down('a'))+movementStick.x;
@@ -3419,6 +3552,8 @@ if(new URLSearchParams(window.location.search).get('test-room')==='1'){
 }
 /* DEV:END js */
 ctx.imageSmoothingEnabled=true;
+let resizeTimer;
+addEventListener('resize',()=>{ clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{ resizeCanvas();lastRender=null; },120); });
 loadMaps();
 requestAnimationFrame(frame);
 </script>
