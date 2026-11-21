@@ -691,10 +691,26 @@ function updateWeapon(dt){
 
 const WALL_TYPES={
   full_stone:{span:1,height:3,thickness:.4},
+  half_wall:{span:1,height:3,thickness:.4,style:'half',top:1.05},
+  window_wall:{span:2,height:3,thickness:.4,style:'window',openings:[[-.55,.55,1,2.1]]},
+  wall_holes:{span:2,height:3,thickness:.4,style:'holes',openings:[[-.7,-.3,.45,1],[.2,.65,1.5,2.15]]},
   arched_entry:{span:3,height:3,thickness:.4,archWidth:1.8,archHeight:2.2}
 };
+// Solid pieces of a straight wall. Pieces marked see sit under an opening: they block walking but not sight.
+function wallPieces(wall){
+  const half=wall.span/2,top=wall.top??wall.height,out=[];
+  let cursor=-half;
+  for(const [x0,x1,y0,y1] of [...(wall.openings??[])].sort((a,b)=>a[0]-b[0])){
+    if(x0>cursor) out.push({x0:cursor,x1:x0,y0:0,y1:top});
+    out.push({x0,x1,y0:0,y1:y0,see:true});
+    if(y1<top) out.push({x0,x1,y0:y1,y1:top});
+    cursor=x1;
+  }
+  if(cursor<half) out.push({x0:cursor,x1:half,y0:0,y1:top});
+  return out;
+}
 const ROOM_LIBRARY_KEY='dungeon-room-library-v1';
-const ROOM_SPECS={"full_stone":[1,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
+const ROOM_SPECS={"full_stone":[1,"full",false,false],"half_wall":[1,"low",false,false],"window_wall":[2,"full",false,false],"wall_holes":[2,"full",false,false],"arched_entry":[3,"full",false,false],"pillar":[1,"full",false,false],"broken-column":[1,"low",false,false],"armoire":[1,"full",false,false],"crate-stack":[1,"full",false,false],"barrel-cluster":[2,"full",false,false],"sarcophagus":[1,"full",false,false],"tapestry":[2,"soft",false,false],"banner":[1,"soft",false,false],"weapon-rack":[2,"full",false,false],"armor-rack":[1,"full",false,false],"iron-maiden":[1,"full",false,false],"wooden-cage":[1,"full",false,false],"rubble":[2,"low",false,false],"stalagmite":[1,"full",false,false],"barrel":[1,"low",false,false],"small-crate":[1,"low",false,false],"overturned-table":[2,"low",false,false],"altar":[2,"low",false,false],"pedestal":[1,"low",false,false],"chest":[1,"low",true,false],"trunk":[1,"low",true,false],"parapet":[2,"low",false,false],"bench":[2,"low",false,false],"cauldron":[1,"low",false,false],"unlit-brazier":[1,"low",false,false],"lit-brazier":[1,"low",false,true],"minecart":[2,"low",false,false],"handcart":[2,"low",false,false]};
 function readRoomLibrary(){
   const stored=JSON.parse(localStorage.getItem(ROOM_LIBRARY_KEY)||'null');
   if(stored===null) return {rooms:[],test:null};
@@ -771,7 +787,8 @@ function placeFieldProps(left,top,blueprint){
     if(wall){
       const parts=fieldPropParts(prop,x,y);
       const vertical=prop.rotation===90||prop.height>prop.width;
-      actors.push({kind:'furnishing',art:prop.type,x,y,height:CEILING_HEIGHT,
+      const topHeight=wall.style==='half'?wall.top*CEILING_HEIGHT/wall.height:CEILING_HEIGHT;
+      actors.push({kind:'furnishing',art:prop.type,x,y,height:topHeight,
         halfX:(vertical?wall.thickness:wall.span)/2,halfY:(vertical?wall.span:wall.thickness)/2,
         parts,wallParts:parts.filter(part=>part.bottom===0)});
       continue;
@@ -803,7 +820,22 @@ function fieldPropParts(prop,x,y){
   if(wall){
     const stone=(along,width,bottom)=>box(along,0,width,wall.thickness,
       bottom*CEILING_HEIGHT/wall.height,CEILING_HEIGHT,[111,112,114],'masonry');
-    if(!wall.archWidth) return [stone(0,wall.span,0)];
+    if(!wall.archWidth){
+      const k=CEILING_HEIGHT/wall.height;
+      const parts=wallPieces(wall).map(p=>{
+        const part=box((p.x0+p.x1)/2,0,p.x1-p.x0,wall.thickness,p.y0*k,p.y1*k,[111,112,114],'masonry');
+        if(p.see) part.see=true;
+        return part;
+      });
+      if(wall.style==='window'){
+        const [x0,x1,y0,y1]=wall.openings[0],cx=(x0+x1)/2;
+        const frame=[134,86,56];
+        parts.push(box(cx,0,.07,.16,y0*k,y1*k,frame,'wood'),
+          box(cx,0,x1-x0,.16,(y0+y1)/2*k-.012,(y0+y1)/2*k+.012,frame,'wood'));
+        parts.at(-1).see=parts.at(-2).see=true;
+      }
+      return parts;
+    }
     const radius=wall.archWidth/2, spring=wall.archHeight-radius;
     const support=(wall.span-wall.archWidth)/2, steps=24, width=wall.archWidth/steps;
     return [
@@ -2444,6 +2476,7 @@ function coverLimit(dx,dy,limit,origin,height){
   for(const prop of fieldCover){
     if(prop.height<height) continue;
     for(const part of prop.wallParts??[prop]){
+      if(part.see) continue;
       const hit=traceCover(dx,dy,part,origin);
       if(hit) limit=Math.min(limit,hit.near);
     }
