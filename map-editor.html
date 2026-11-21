@@ -47,6 +47,16 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
 .saved-rooms button { display:flex; align-items:center; gap:8px; text-align:left; overflow-wrap:anywhere; }
 .saved-rooms canvas { flex:none; width:39px; height:39px; }
 .cell[data-room=custom] { background:#4d6457; }
+.cell[data-trap]:not([data-trap=""]) { box-shadow:inset 0 0 0 2px #d9534f; }
+.cell[data-objective=true] { outline:2px solid #7ec8ff; outline-offset:-3px; }
+.cell[data-target=true] { color:#ff9c8f; }
+.settings { margin-top:14px; display:grid; gap:8px; }
+.settings label { display:grid; gap:3px; font-size:.9rem; color:#e0c8a9; }
+.settings label.check { display:flex; gap:8px; align-items:center; }
+.settings input[type=text],.settings input[type=number],.settings select,.settings textarea { font:inherit; color:inherit; background:#191613; border:1px solid #67523f; border-radius:6px; padding:6px 8px; min-height:36px; }
+.settings textarea { min-height:64px; resize:vertical; }
+.legend { font-size:.85rem; color:#cdb79b; margin:8px 0 0; line-height:1.4; }
+#report { white-space:pre-wrap; margin:10px 0 0; font-size:.9rem; color:#e0c8a9; }
 </style>
 </head>
 <body>
@@ -64,6 +74,16 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
         <button data-tool="chest" aria-pressed="false">Chest</button>
         <button data-tool="erase" aria-pressed="false">Erase room</button>
       </div>
+      <h2>Mission</h2>
+      <div class="palette" role="group" aria-label="Mission tools">
+        <button data-tool="trap" aria-pressed="false">Trap (click to cycle)</button>
+        <button data-tool="guard" aria-pressed="false">Guards (click to add)</button>
+        <button data-tool="target" aria-pressed="false">Target guard</button>
+        <button data-tool="objective" aria-pressed="false">Objective room</button>
+        <button data-tool="wallEast" aria-pressed="false">Toggle wall east</button>
+        <button data-tool="wallSouth" aria-pressed="false">Toggle wall south</button>
+      </div>
+      <p class="legend">T trap · number is guards · star is a target room · flag is the objective room. A missing connector means a wall. A chamber next to a chamber is open unless you wall it.</p>
       <h2>My Rooms</h2>
 <a href="./room-editor.html">Open Room Editor</a>
 <div class="saved-rooms" id="saved-rooms" role="group" aria-label="Saved room tools"></div>
@@ -76,8 +96,28 @@ button:focus-visible, .board:focus-visible { outline:2px solid #ffd98f; outline-
         <button id="export">Save JSON</button>
         <button id="import">Open JSON</button>
         <button id="clear" disabled>Clear map</button>
+        <button id="check">Check map</button>
+        <button id="play">Test in game</button>
         <input id="file" type="file" accept=".json,application/json" hidden>
       </div>
+      <div class="settings" role="group" aria-label="Map settings">
+        <label>Map name<input type="text" id="m-name" maxlength="60"></label>
+        <label>Briefing<textarea id="m-blurb" maxlength="240"></textarea></label>
+        <label>Theme<select id="m-theme">
+          <option value="crypt">Flooded Crypt (cold, wet)</option><option value="armory">Iron Armory (warm, soldiers)</option>
+          <option value="library">Sunken Library (violet, scholars)</option><option value="sewer">Blighted Sewer (green, vermin)</option>
+          <option value="keep">Throne Keep (red, royal guard)</option></select></label>
+        <label>Objective<select id="m-type">
+          <option value="retrieve">Retrieve the main crate and escape</option><option value="eliminate">Eliminate targets</option>
+          <option value="reach">Reach a location</option><option value="stealth">Eliminate targets unseen (strikes)</option></select></label>
+        <label class="check"><input type="checkbox" id="m-activate">Reach objective: activate a terminal there</label>
+        <label class="check"><input type="checkbox" id="m-return">Return to the entrance to finish</label>
+        <label class="check"><input type="checkbox" id="m-alarm">Alarm sounds when the objective completes</label>
+        <label class="check"><input type="checkbox" id="m-locked">Retrieve: lock the vault and hide a key</label>
+        <label>Strikes allowed (stealth)<input type="number" id="m-strikes" min="1" max="9"></label>
+        <label>Weapon pickups<input type="number" id="m-weapons" min="0" max="6"></label>
+      </div>
+      <p id="report" role="status"></p>
       <div class="board" tabindex="0" aria-label="Scrollable map board">
         <div id="grid" role="group" aria-label="Dungeon map squares"></div>
       </div>
@@ -141,6 +181,7 @@ let tool = 'chamber';
 let savedSource=null;
 let focusedCell = 0;
 const key = (x,y) => y * size + x;
+const linkId=(a,b)=>[a%size+','+Math.floor(a/size),b%size+','+Math.floor(b/size)].sort().join('|');
 const setStatus = message => { status.textContent = message; };
 
 function decode(data) {
@@ -158,17 +199,30 @@ function decode(data) {
     }
     if(room.type==='custom'){
       const snapshot=playableRoom(room.snapshot);
-      cells.set(key(room.x,room.y),{x:room.x,y:room.y,chest:room.chest,type:'custom',sourceId:typeof room.sourceId==='string'?room.sourceId:null,snapshot});
+      cells.set(key(room.x,room.y),{...room,snapshot,sourceId:typeof room.sourceId==='string'?room.sourceId:null});
     } else cells.set(key(room.x,room.y),room);
   }
+  cells.meta=cleanMeta(data.meta);
   return cells;
 }
+const THEMES=['crypt','armory','library','sewer','keep'],OBJ_TYPES=['retrieve','eliminate','reach','stealth'],TRAPS=['spikes','gas','flame','acid'];
+function cleanMeta(m={}){
+  const o=m.objective??{},type=OBJ_TYPES.includes(o.type)?o.type:'retrieve';
+  return {name:String(m.name??'Untitled map').slice(0,60),blurb:String(m.blurb??'').slice(0,240),
+    theme:THEMES.includes(m.theme)?m.theme:'crypt',
+    objective:{type,activate:!!o.activate,strikes:Math.max(1,Math.min(9,Math.round(Number(o.strikes))||3)),
+      returnToExit:o.returnToExit??(type==='retrieve'||type==='eliminate'),alarm:o.alarm??(type==='retrieve')},
+    lockedVault:!!m.lockedVault,weaponCount:Math.max(0,Math.min(6,Math.round(Number(m.weaponCount??2))||0)),
+    blocked:Array.isArray(m.blocked)?m.blocked.filter(v=>typeof v==='string'):[]};
+}
+let meta=cleanMeta();
 function encode() {
-  return { version:1, width:size, height:size, rooms:[...layout.values()] };
+  const guardCount=[...layout.values()].reduce((n,r)=>n+(r.guards|0),0);
+  return { version:1, width:size, height:size, rooms:[...layout.values()], meta:{...meta,guardCount:Math.max(1,guardCount)} };
 }
 try {
   const saved = localStorage.getItem(storageKey);
-  if (saved) layout = decode(JSON.parse(saved));
+  if (saved) { layout = decode(JSON.parse(saved)); meta=layout.meta; }
 } catch {
   setStatus('The browser draft could not be restored. You can still open a saved JSON layout.');
 }
@@ -191,12 +245,15 @@ function render() {
     if (room?.chest) chests++;
     button.dataset.room = room?.type ?? '';
     button.dataset.chest = Boolean(room?.chest);
-    button.dataset.east = Boolean(room && x < size - 1 && layout.has(index + 1));
-    button.dataset.south = Boolean(room && layout.has(index + size));
+    button.dataset.east = Boolean(room && x < size - 1 && layout.has(index + 1) && !meta.blocked.includes(linkId(index,index+1)));
+    button.dataset.south = Boolean(room && layout.has(index + size) && !meta.blocked.includes(linkId(index,index+size)));
+    button.dataset.trap = room?.trap ?? '';
+    button.dataset.target = Boolean(room?.target);
+    button.dataset.objective = Boolean(room?.objective);
     const mark=room?.snapshot?.name?.trim().slice(0,2).toUpperCase()||type?.mark||'';
-    button.textContent = room?.chest ? mark + ' ◆' : mark;
+    button.textContent = mark+(room?.chest?' ◆':'')+(room?.trap?' T':'')+(room?.guards?' '+room.guards:'')+(room?.target?'★':'')+(room?.objective?'⚑':'');
     const name = 'Column ' + (x + 1) + ', row ' + (y + 1) + ' · ' + (room?.snapshot?.name || type?.label || 'Empty') +
-      (room?.chest ? ' with chest' : '');
+      (room?.chest ? ' with chest' : '')+(room?.trap?', '+room.trap+' trap':'')+(room?.guards?', '+room.guards+' guards':'')+(room?.target?', target':'')+(room?.objective?', objective':'');
     button.setAttribute('aria-label', name);
     button.title = name;
   });
@@ -205,6 +262,7 @@ function render() {
   grid.setAttribute('aria-label', 'Dungeon map · ' + layout.size + ' rooms · ' + chests + ' chests');
 }
 function persist() {
+  layout.meta=meta;
   render();
   try {
     localStorage.setItem(storageKey, JSON.stringify(encode()));
@@ -213,7 +271,7 @@ function persist() {
   }
 }
 function remember() {
-  history.push(new Map(layout));
+  const snap=new Map(layout); snap.meta=meta; history.push(snap);
   if (history.length > 50) history.shift();
 }
 function place(index) {
@@ -230,6 +288,28 @@ function place(index) {
       persist();
     }catch(error){setStatus(error.message);}
     return;
+  }
+  if(['trap','guard','target','objective'].includes(tool)){
+    if(!existing||existing.type==='entrance'){ setStatus('Place a non-entrance room first.'); return; }
+    remember();
+    const next={...existing};
+    if(tool==='trap'){ const i=TRAPS.indexOf(next.trap); next.trap=i+1<TRAPS.length?TRAPS[i+1]:null; if(!next.trap) delete next.trap; setStatus(next.trap?next.trap+' trap set.':'Trap removed.'); }
+    if(tool==='guard'){ next.guards=((next.guards|0)+1)%4; if(!next.guards){ delete next.guards; delete next.target; } setStatus((next.guards|0)+' guards here.'); }
+    if(tool==='target'){ if(!next.guards){ next.guards=1; } next.target=!next.target; if(!next.target) delete next.target; setStatus(next.target?'The first guard here is a target.':'Target removed.'); }
+    if(tool==='objective'){
+      for(const [k,r] of layout) if(r.objective&&k!==index){ const c={...r}; delete c.objective; layout.set(k,c); }
+      next.objective=!next.objective; if(!next.objective) delete next.objective; setStatus(next.objective?'Objective room set.':'Objective room cleared.');
+    }
+    layout.set(index,next); persist(); return;
+  }
+  if(tool==='wallEast'||tool==='wallSouth'){
+    const other=tool==='wallEast'?index+1:index+size;
+    if(!existing||!layout.has(other)||(tool==='wallEast'&&index%size===size-1)){ setStatus('Select a room that has a neighbor in that direction.'); return; }
+    remember();
+    const id=linkId(index,other),blocked=new Set(meta.blocked);
+    blocked.has(id)?blocked.delete(id):blocked.add(id);
+    meta={...meta,blocked:[...blocked]};
+    setStatus(blocked.has(id)?'Wall placed.':'Wall removed.'); persist(); return;
   }
   if (tool === 'chest' && !existing) {
     setStatus('Place a room before adding a chest.');
@@ -279,20 +359,23 @@ for (const button of tools) {
     savedSource=null;
     refreshRoomPicker();
     for (const other of tools) other.setAttribute('aria-pressed', String(other === button));
-    setStatus(tool === 'chest' ? 'Select a room to add or remove its chest.' :
+    setStatus(tool==='trap'?'Select a room to cycle its trap.':tool==='guard'?'Select a room to add guards (0 to 3).':tool==='target'?'Select a room whose first guard is a target.':tool==='objective'?'Select the room that holds the objective.':tool.startsWith('wall')?'Select a room to wall off or open the link to its neighbor.':
+      tool === 'chest' ? 'Select a room to add or remove its chest.' :
       tool === 'erase' ? 'Select a room to erase it and its chest.' : 'Select a square to place ' + rooms[tool].label.toLowerCase() + '.');
   });
 }
 undo.onclick = () => {
   if (!history.length) return;
   layout = history.pop();
+  meta=layout.meta??meta;
   setStatus('Last change undone.');
+  syncSettings();
   persist();
 };
 clear.onclick = () => {
   if (!layout.size) return;
   remember();
-  layout = new Map();
+  layout = new Map(); layout.meta=meta;
   setStatus('Map cleared. Undo restores it.');
   persist();
 };
@@ -300,7 +383,7 @@ document.querySelector('#export').onclick = () => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(encode(), null, 2)], { type:'application/json' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'dungeon-layout.json';
+  link.download = (meta.name||'dungeon-layout').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')+'.json';
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
@@ -312,7 +395,7 @@ file.onchange = async () => {
   try {
     const imported = decode(JSON.parse(await selected.text()));
     remember();
-    layout = imported;
+    layout = imported; meta=imported.meta; syncSettings();
     setStatus('Layout opened. Undo restores the previous map.');
     persist();
   } catch (error) {
@@ -361,7 +444,71 @@ updateRoomButton.onclick=()=>{
 };
 addEventListener('storage',event=>{if(event.key===ROOM_LIBRARY_KEY) refreshRoomPicker();});
 refreshRoomPicker();
-render();
+const $=id=>document.getElementById(id);
+function syncSettings(){
+  $('m-name').value=meta.name;$('m-blurb').value=meta.blurb;$('m-theme').value=meta.theme;$('m-type').value=meta.objective.type;
+  $('m-activate').checked=meta.objective.activate;$('m-return').checked=meta.objective.returnToExit;$('m-alarm').checked=meta.objective.alarm;
+  $('m-locked').checked=meta.lockedVault;$('m-strikes').value=meta.objective.strikes;$('m-weapons').value=meta.weaponCount;
+  $('m-activate').disabled=meta.objective.type!=='reach';$('m-locked').disabled=meta.objective.type!=='retrieve';$('m-strikes').disabled=meta.objective.type!=='stealth';
+  render();
+}
+function readSettings(){
+  const type=$('m-type').value;
+  meta={...meta,name:$('m-name').value.trim()||'Untitled map',blurb:$('m-blurb').value,theme:$('m-theme').value,
+    lockedVault:$('m-locked').checked,weaponCount:Math.max(0,Math.min(6,Number($('m-weapons').value)||0)),
+    objective:{type,activate:$('m-activate').checked,strikes:Math.max(1,Math.min(9,Number($('m-strikes').value)||3)),
+      returnToExit:$('m-return').checked,alarm:$('m-alarm').checked}};
+  $('m-activate').disabled=type!=='reach';$('m-locked').disabled=type!=='retrieve';$('m-strikes').disabled=type!=='stealth';
+  persist();
+}
+for(const id of ['m-name','m-blurb','m-theme','m-type','m-activate','m-return','m-alarm','m-locked','m-strikes','m-weapons'])
+  $(id).addEventListener(id==='m-name'||id==='m-blurb'?'input':'change',()=>{
+    if(id==='m-type'){ const t=$('m-type').value; $('m-return').checked=t==='retrieve'||t==='eliminate'; $('m-alarm').checked=t==='retrieve'; }
+    readSettings();
+  });
+function validate(){
+  const problems=[],notes=[];
+  const rs=[...layout.values()];
+  const ent=rs.filter(r=>r.type==='entrance');
+  if(ent.length!==1) problems.push(ent.length?'Only one entrance is allowed.':'Place one entrance.');
+  const byKey=layout;
+  if(ent.length===1){
+    const e=ent[0],north=byKey.get(key(e.x,e.y-1));
+    if(!north||north.type==='entrance'||meta.blocked.includes(linkId(key(e.x,e.y),key(e.x,e.y-1)))) problems.push('The entrance needs an open room directly north of it.');
+    const seen=new Set([key(e.x,e.y)]),queue=[key(e.x,e.y)];
+    while(queue.length){
+      const i=queue.pop(),x=i%size,y=Math.floor(i/size);
+      for(const [dx,dy] of [[0,-1],[1,0],[0,1],[-1,0]]){
+        const nx=x+dx,ny=y+dy; if(nx<0||ny<0||nx>=size||ny>=size) continue;
+        const n=key(nx,ny); if(!byKey.has(n)||seen.has(n)||meta.blocked.includes(linkId(i,n))) continue;
+        if(byKey.get(i).type==='entrance'&&(dx||dy!==-1)) continue;
+        if(byKey.get(n).type==='entrance'&&(dx||dy!==1)) continue;
+        seen.add(n);queue.push(n);
+      }
+    }
+    if(seen.size<byKey.size) problems.push((byKey.size-seen.size)+' room(s) cannot be reached from the entrance.');
+  }
+  const t=meta.objective.type;
+  const guardsTotal=rs.reduce((n,r)=>n+(r.guards|0),0),targets=rs.filter(r=>r.target).length;
+  if(t==='retrieve'&&!rs.some(r=>r.objective||r.type==='vault')) notes.push('No vault or objective room. The farthest room will hold the main crate.');
+  if(t==='reach'&&!rs.some(r=>r.objective)) notes.push('No objective room set. The vault, or else the farthest room, becomes the destination.');
+  if((t==='eliminate'||t==='stealth')&&!targets) notes.push('No target guards set. Every guard becomes a target.');
+  if(!guardsTotal) notes.push('No guards placed. The game will use the default of 4 spread across rooms.');
+  if(t==='stealth'&&guardsTotal<4) notes.push('A stealth map plays better with at least 4 guards.');
+  return {problems,notes,summary:`${byKey.size} rooms · ${guardsTotal} guards · ${targets} targets · ${rs.filter(r=>r.chest).length} chests`};
+}
+$('check').onclick=()=>{
+  const v=validate();
+  $('report').textContent=[v.summary,...(v.problems.length?['Problems:',...v.problems.map(p=>'• '+p)]:['No blocking problems.']),...(v.notes.length?['Notes:',...v.notes.map(p=>'• '+p)]:[])].join('\n');
+};
+$('play').onclick=()=>{
+  const v=validate();
+  if(v.problems.length){ $('check').click(); setStatus('Fix the problems first.'); return; }
+  persist();
+  window.open('./?dev-draft=1','_blank');
+};
+layout.meta=meta;
+syncSettings();
 </script>
 </body>
 </html>

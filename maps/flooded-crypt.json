@@ -1,0 +1,292 @@
+{
+ "version": 1,
+ "width": 14,
+ "height": 14,
+ "rooms": [
+  {
+   "x": 2,
+   "y": 1,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 4,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "type": "vault",
+   "chest": true
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 10,
+   "y": 1,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 2,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 3,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "type": "chamber",
+   "chest": true,
+   "trap": "spikes"
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 3,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 3,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 6,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 6,
+   "type": "chamber",
+   "chest": true,
+   "trap": "gas"
+  },
+  {
+   "x": 6,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 8,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 3,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 8,
+   "type": "chamber",
+   "chest": true
+  },
+  {
+   "x": 6,
+   "y": 9,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 10,
+   "type": "entrance",
+   "chest": false
+  }
+ ],
+ "meta": {
+  "name": "Flooded Crypt",
+  "blurb": "Water seeps through the old burial halls. Find the sealed reliquary and bring it out.",
+  "theme": "crypt",
+  "objective": {
+   "type": "retrieve",
+   "returnToExit": true,
+   "alarm": true
+  },
+  "lockedVault": true,
+  "weaponCount": 3,
+  "guardCount": 5,
+  "blocked": []
+ }
+}

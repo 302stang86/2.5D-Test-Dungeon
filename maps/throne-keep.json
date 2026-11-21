@@ -1,0 +1,285 @@
+{
+ "version": 1,
+ "width": 14,
+ "height": 14,
+ "rooms": [
+  {
+   "x": 4,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 6,
+   "y": 1,
+   "type": "vault",
+   "chest": false,
+   "guards": 1,
+   "target": true,
+   "art": "old-throne-room"
+  },
+  {
+   "x": 8,
+   "y": 1,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 4,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 2,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 3,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 4,
+   "y": 3,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 3,
+   "type": "chamber",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 3,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 3,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 2,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 3,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 9,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 11,
+   "y": 4,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 2,
+   "y": 5,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 4,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 5,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 10,
+   "y": 5,
+   "type": "chamber",
+   "chest": true,
+   "guards": 1
+  },
+  {
+   "x": 4,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 6,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 7,
+   "type": "chamber",
+   "chest": true,
+   "trap": "spikes",
+   "guards": 1
+  },
+  {
+   "x": 8,
+   "y": 7,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 4,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 5,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 7,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 8,
+   "y": 8,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 9,
+   "type": "hall",
+   "chest": false
+  },
+  {
+   "x": 6,
+   "y": 10,
+   "type": "entrance",
+   "chest": false
+  }
+ ],
+ "meta": {
+  "name": "Throne Keep",
+  "blurb": "The usurper holds court tonight. One quiet strike, no alarms. Three sightings and the doors lock.",
+  "theme": "keep",
+  "objective": {
+   "type": "stealth",
+   "strikes": 3,
+   "returnToExit": true,
+   "alarm": false
+  },
+  "lockedVault": false,
+  "weaponCount": 2,
+  "guardCount": 8,
+  "blocked": []
+ }
+}

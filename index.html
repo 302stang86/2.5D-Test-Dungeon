@@ -123,6 +123,8 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
 #summary td + td { text-align:right; color:#ffe5ba; }
 .summary-actions { display:flex; gap:8px; justify-content:center; margin-top:8px; }
 .mute-label { display:inline-flex; align-items:center; gap:6px; margin:8px 0; }
+#summary { z-index:4; }
+.menu-blurb { color:#d3c4af; font-size:.9rem; min-height:2.8em; margin:8px 0 0; line-height:1.4; }
 /* DEV:START css (remove with the rest of the DEV blocks after field testing) */
 .dev-menu { border-top:1px dashed #806345; padding-top:6px; }
 .dev-menu summary { color:#ff9b73; font-weight:700; }
@@ -167,6 +169,7 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
     <h1 id="menu-title">2.5D Test Dungeon</h1>
     <label for="menu-location">Expedition</label>
     <select id="menu-location"></select>
+    <p id="menu-blurb" class="menu-blurb" role="status"></p>
     <div class="menu-actions">
       <button id="resume-expedition" hidden>Resume Expedition</button>
       <button id="start-expedition">Start Expedition</button>
@@ -184,6 +187,9 @@ canvas { display:block; width:100%; aspect-ratio:16/10; touch-action:none; }
       <label for="dev-location">Field test</label>
       <select id="dev-location"></select>
       <div class="menu-actions"><button id="dev-start">Start Field Test</button></div>
+      <label for="dev-file">Play a map JSON file</label>
+      <input type="file" id="dev-file" accept=".json,application/json">
+      <div class="menu-actions"><button id="dev-draft">Play map from my editor draft</button></div>
       <label class="dev-check"><input type="checkbox" id="dev-reveal"> Reveal full map and all guards</label>
       <label class="dev-check"><input type="checkbox" id="dev-god"> Invulnerable</label>
       <div class="menu-actions">
@@ -308,7 +314,10 @@ const DUNGEON_TIERS=[
   {id:'dungeon-medium',name:'Buried Keep',crateCount:5,occupancy:.6,rooms:[3,5,6,8,19],
     guards:4,loop:.18,weapons:2,pool:['pistol','smg','ar15'],locked:true},
   {id:'dungeon-high',name:'Hollow Citadel',crateCount:8,occupancy:.9,rooms:[3,4,7,9,18,19],
-    guards:6,loop:.28,weapons:3,pool:['pistol','shotgun','smg','ar15','ak47'],locked:true}
+    guards:6,loop:.28,weapons:3,pool:['pistol','shotgun','smg','ar15','ak47'],locked:true},
+  {id:'dungeon-hunt',name:'Random Hunt (stealth)',crateCount:4,occupancy:.75,rooms:[2,3,5,6,16,18,19],
+    guards:12,loop:.22,weapons:2,pool:['pistol','smg'],locked:false,
+    objective:{type:'stealth',strikes:3,returnToExit:false,alarm:false}}
 ];
 
 
@@ -445,6 +454,8 @@ let mode = 'eye', escaped, drag, roomLights;
 let armor=0,looseAmmo=0,hasKey=false,alarm=false,hurtFlash=0,hurtDir=null,shake=0,muzzleFlash=0,lastSpeed=0;
 let dotLeft=0,dotRate=0,alertLevel=0,stepTimer=0,summaryShown=false,guardCount=4,playerVisibility=1;
 let runStats={},discovered=new Set();
+let activeMap=null,mapTheme=null,objective=null,strikes=0,strikeCooldown=0,failReason='',objectiveDone=false;
+let ambientTint=[1,1,1],fogColor='10,13,19',drone=null;
 const particles=[];
 const byId = id => document.getElementById(id);
 const mobile = matchMedia('(hover:none) and (pointer:coarse)');
@@ -461,9 +472,14 @@ let crouchPointer;
 const gamePaused = () => main.hidden || (mobile.matches && (portrait.matches || main.classList.contains('menu-open')));
 const tell = message => { byId('message').textContent = message; };
 const locationSelect = byId('location');
-for (const tier of DUNGEON_TIERS) locationSelect.add(new Option(tier.name,tier.id));
-locationSelect.add(new Option('Rival Stronghold','rival'));
-menuLocation.replaceChildren(...Array.from(locationSelect.options, option=>option.cloneNode(true)));
+const missionGroup=document.createElement('optgroup');
+missionGroup.label='Missions';
+const randomGroup=document.createElement('optgroup');
+randomGroup.label='Random expeditions';
+for (const tier of DUNGEON_TIERS) randomGroup.append(new Option(tier.name,tier.id));
+randomGroup.append(new Option('Rival Stronghold','rival'));
+locationSelect.append(randomGroup);
+menuLocation.replaceChildren(randomGroup.cloneNode(true));
 
 /* DEV:START js (remove through DEV:END after field testing; also remove the DEV html and css blocks.
    Afterwards the room-test and acid-test branches inside restart() are unreachable and can be deleted too.) */
@@ -476,6 +492,29 @@ globalThis.DEV={reveal:false,god:false};
   }
   byId('dev-reveal').onchange=event=>{ DEV.reveal=event.target.checked; mapLayers?.clear(); turn++; };
   byId('dev-god').onchange=event=>{ DEV.god=event.target.checked; };
+  const devPlay=def=>{
+    MAPS.set('dev-draft',def);
+    if(!locationSelect.querySelector('option[value="map:dev-draft"]')) locationSelect.add(new Option('Editor draft (DEV)','map:dev-draft'));
+    locationSelect.value='map:dev-draft';
+    setMode('eye');
+    restart();
+    expeditionStarted=true;
+    showGame();
+  };
+  globalThis.devPlayDraft=()=>{
+    try{
+      const raw=localStorage.getItem('dungeon-map-editor-v1');
+      if(!raw) throw new Error('No editor draft found. Build a map in the Map Editor first.');
+      devPlay(parseMap(JSON.parse(raw),'dev-draft'));
+    }catch(error){ alert(error.message); }
+  };
+  byId('dev-draft').onclick=globalThis.devPlayDraft;
+  byId('dev-file').onchange=async event=>{
+    const file=event.target.files[0];
+    event.target.value='';
+    if(!file) return;
+    try{ devPlay(parseMap(JSON.parse(await file.text()),'dev-draft')); }catch(error){ alert(error.message); }
+  };
   byId('dev-start').onclick=()=>{
     locationSelect.value=byId('dev-location').value;
     setMode('eye');
@@ -538,7 +577,7 @@ function activeWeapon(){ return weaponEquipped ? carriedWeapon : null; }
 function clearWeaponAction(){ shotTime=reloadTime=0; shotImpact=null; }
 function stockChests(tier){
   const chests=actors.filter(a=>a.kind==='crate'&&!a.mainCache&&!a.key).sort(()=>Math.random()-.5);
-  const pool=tier?.pool ?? Object.keys(WEAPONS);
+  const pool=tier?.pool ?? mapTheme?.weapons ?? Object.keys(WEAPONS);
   const weaponCount=Math.min(chests.length,tier?.weapons ?? 2);
   chests.forEach((chest,i)=>{
     if(i<weaponCount) chest.weapon=pool[ri(pool.length)];
@@ -694,6 +733,18 @@ function fieldRoomLayout(blueprint){
   }
   return {tiles,doorwayLanes,rulingName:'Custom Room Field Test',vaultKey:roomKey(tiles[1]??center)};
 }
+function doorSide(p){ return p.y===0?0:p.x===ROOM_SIZE-1?1:p.y===ROOM_SIZE-1?2:3; }
+// Saved rooms may place their doorways off center. Hall corridors are always centered, so they win.
+function mapDoorLanes(a,b,d){
+  const isHall=t=>t.type>=12&&t.type<=15;
+  if(!isHall(a)&&!isHall(b)){
+    for(const [tile,dir] of [[a,d],[b,(d+2)%4]]){
+      const doors=tile.snapshot?.doorways.filter(p=>doorSide(p)===dir);
+      if(doors?.length) return doors.map(p=>(dir%2===0?p.x:p.y)-ROOM_LEFT);
+    }
+  }
+  return Array.from({length:ARCH_WIDTH},(_,i)=>i-ARCH_LEFT);
+}
 function placeFieldProps(left,top,blueprint){
   for(const prop of blueprint.props){
     const centered=prop.type==='arched_entry';
@@ -784,11 +835,276 @@ function fieldPropParts(prop,x,y){
     box(0,-.159,.14,.02,.76,.79,[41,43,44])
   ];
 }
+
+// ---- Mission themes: they change the look and the enemies, not the setting ----
+const MAP_THEMES={
+  crypt:{label:'Flooded Crypt',arts:['crypt','flooded-chamber','dark-cell','cave-room'],hallStyle:'cave',
+    fog:'7,13,20',tint:[.92,1,1.1],guards:['scout','security','jester'],hpScale:1,
+    names:{scout:'Grave warden',security:'Crypt keeper',jester:'Gaunt acolyte'},
+    weapons:['pistol','smg'],drone:[52,'sine']},
+  armory:{label:'Iron Armory',arts:['armory','barracks','ruined-storage','old-kitchen'],hallStyle:'hall',
+    fog:'18,13,9',tint:[1.1,1,.9],guards:['officer','security','detective'],hpScale:1.1,
+    names:{officer:'Armory guard',security:'Siege sergeant',detective:'Quartermaster'},
+    weapons:['shotgun','ar15','ak47','smg'],drone:[70,'sawtooth']},
+  library:{label:'Sunken Library',arts:['ruined-library','alchemy-lab','rune-sanctum','collapsed-hall'],hallStyle:'hall',
+    fog:'16,10,22',tint:[1.02,.95,1.1],guards:['detective','investigator','scout'],hpScale:.95,
+    names:{detective:'Archivist',investigator:'Scribe adept',scout:'Page'},
+    weapons:['pistol','smg'],drone:[44,'triangle']},
+  sewer:{label:'Blighted Sewer',arts:['flooded-chamber','cave-room','collapsed-hall','ruined-storage'],hallStyle:'cave',
+    fog:'10,20,10',tint:[.92,1.1,.88],guards:['jester','scout','investigator'],hpScale:.9,
+    names:{jester:'Sewer rat',scout:'Gutter scout',investigator:'Warren boss'},
+    weapons:['pistol','shotgun'],drone:[38,'sine']},
+  keep:{label:'Throne Keep',arts:['old-throne-room','chapel','barracks','old-kitchen'],hallStyle:'hall',
+    fog:'20,12,12',tint:[1.08,.97,.94],guards:['officer','security','detective','scout'],hpScale:1.15,
+    names:{officer:'Royal guard',security:'Captain of the guard',detective:'Steward',scout:'Sentry'},
+    weapons:['pistol','ar15'],drone:[60,'triangle']}
+};
+const OBJECTIVE_TYPES=['retrieve','eliminate','reach','stealth'];
+function normalizeObjective(o={}){
+  const type=OBJECTIVE_TYPES.includes(o.type)?o.type:'retrieve';
+  const activate=!!o.activate;
+  return {type,activate,
+    strikes:Math.max(1,Math.min(9,Math.round(Number(o.strikes))||3)),
+    returnToExit:o.returnToExit ?? (type==='retrieve'||type==='eliminate'),
+    alarm:o.alarm ?? (type==='retrieve'||(type==='reach'&&activate))};
+}
+function objectiveText(o){
+  if(!o) return '';
+  const back=o.returnToExit?' Then return to the entrance.':'';
+  switch(o.type){
+    case 'eliminate': return 'Eliminate your targets.'+back;
+    case 'stealth': return `Eliminate your targets without being spotted. ${o.strikes} strikes allowed.`+back;
+    case 'reach': return (o.activate?'Reach the objective room and activate the terminal.':'Reach the marked location.')+back;
+    default: return 'Recover the main supply crate and return to the entrance.';
+  }
+}
+// ---- Fixed maps from maps/*.json (designed in map-editor.html) ----
+const MAPS=new Map();
+const MAP_ROOM_TYPES=['entrance','chamber','hall','storage','vault','custom'];
+const MAP_TRAPS=['spikes','gas','flame','acid'];
+function parseMap(data,id='map'){
+  if(data?.version!==1||data.width!==14||data.height!==14||!Array.isArray(data.rooms)) throw new Error('Not a map file saved by the map editor.');
+  const seen=new Set(),rooms=[];
+  for(const r of data.rooms){
+    if(!r||!Number.isInteger(r.x)||!Number.isInteger(r.y)||r.x<0||r.y<0||r.x>13||r.y>13||!MAP_ROOM_TYPES.includes(r.type))
+      throw new Error('The map contains an invalid room.');
+    const key=r.x+','+r.y;
+    if(seen.has(key)) throw new Error('The map contains a duplicate room.');
+    seen.add(key);
+    rooms.push({x:r.x,y:r.y,type:r.type,chest:!!r.chest,trap:MAP_TRAPS.includes(r.trap)?r.trap:null,
+      guards:Math.max(0,Math.min(3,r.guards|0)),target:!!r.target,objective:!!r.objective,
+      art:Object.hasOwn(ART_STYLE,r.art)?r.art:null,snapshot:r.type==='custom'?playableRoom(r.snapshot):null});
+  }
+  const entrances=rooms.filter(r=>r.type==='entrance');
+  if(entrances.length!==1) throw new Error('A map needs exactly one entrance.');
+  const m=data.meta??{};
+  const meta={id,name:String(m.name||'Untitled map').slice(0,60),blurb:String(m.blurb||'').slice(0,240),
+    theme:Object.hasOwn(MAP_THEMES,m.theme)?m.theme:'crypt',objective:normalizeObjective(m.objective),
+    lockedVault:!!m.lockedVault,weaponCount:Math.max(0,Math.min(6,Math.round(Number(m.weaponCount??2))||0)),
+    guardCount:Math.max(1,Math.min(14,Math.round(Number(m.guardCount))||4)),
+    blocked:Array.isArray(m.blocked)?m.blocked.filter(v=>typeof v==='string').slice(0,500):[]};
+  const def={id,rooms,meta};
+  mapLayout(def); // throws if the layout cannot be played
+  return def;
+}
+const linkKey=(a,b)=>[a.x+','+a.y,b.x+','+b.y].sort().join('|');
+function mapHash(x,y,n){ return ((Math.imul(x+11,73856093)^Math.imul(y+7,19349663))>>>0)%n; }
+function mapLayout(def){
+  const {meta}=def,theme=MAP_THEMES[meta.theme];
+  const cells=new Map(def.rooms.map(r=>[r.x+','+r.y,r]));
+  const blocked=new Set(meta.blocked);
+  const entranceRoom=def.rooms.find(r=>r.type==='entrance');
+  const north=cells.get(entranceRoom.x+','+(entranceRoom.y-1));
+  if(!north||north.type==='entrance'||blocked.has(linkKey(entranceRoom,north)))
+    throw new Error('The entrance needs an open room directly north of it.');
+  const portsOf=r=>{
+    const ports=[];
+    DIRS.forEach(([dx,dy],d)=>{
+      const n=cells.get((r.x+dx)+','+(r.y+dy));
+      if(!n||blocked.has(linkKey(r,n))) return;
+      if(r.type==='entrance'&&d!==0) return;
+      if(n.type==='entrance'&&d!==2) return;
+      ports.push(d);
+    });
+    return ports;
+  };
+  // Every room must be reachable from the entrance.
+  const links=new Map(def.rooms.map(r=>[r.x+','+r.y,portsOf(r)]));
+  const dist=new Map([[entranceRoom.x+','+entranceRoom.y,0]]),queue=[entranceRoom];
+  for(let i=0;i<queue.length;i++){
+    const r=queue[i];
+    for(const d of links.get(r.x+','+r.y)){
+      const n=cells.get((r.x+DIRS[d][0])+','+(r.y+DIRS[d][1]));
+      const k=n.x+','+n.y;
+      if(!dist.has(k)){ dist.set(k,dist.get(r.x+','+r.y)+1);queue.push(n); }
+    }
+  }
+  if(dist.size!==def.rooms.length) throw new Error(`${def.rooms.length-dist.size} room(s) cannot be reached from the entrance.`);
+  const tiles=[],crateRooms=new Set(),posts=[];
+  const ordered=[entranceRoom,...def.rooms.filter(r=>r!==entranceRoom)];
+  let objectiveRoom=def.rooms.find(r=>r.objective)??def.rooms.find(r=>r.type==='vault');
+  if(!objectiveRoom) objectiveRoom=[...def.rooms].sort((a,b)=>dist.get(b.x+','+b.y)-dist.get(a.x+','+a.y))[0];
+  for(const r of ordered){
+    let ports=links.get(r.x+','+r.y);
+    const tile={x:r.x,y:r.y,rot:0,level:1,ports};
+    const art=r.art??theme.arts[mapHash(r.x,r.y,theme.arts.length)];
+    if(r.type==='entrance'){ tile.type=17;tile.ports=[0]; }
+    else if(r.trap){ tile.type=11;tile.dungeonTrap=r.trap;tile.dungeonArt='torture-chamber'; }
+    else if(r.type==='hall'&&ports.length>=2){
+      tile.type=ports.length===4?15:ports.length===3?14:ports.includes((ports[0]+2)%4)?12:13;
+      if(tile.type===12) tile.rot=ports[0]%2;
+      if(tile.type===13) tile.rot=ports.find(p=>ports.includes((p+1)%4));
+      if(tile.type===14) tile.rot=(DIRS.findIndex((_,i)=>!ports.includes(i))+2)%4;
+      tile.ports=ports.map(p=>(p-tile.rot+4)%4);
+      tile.dungeonArt=tile.type===12?'straight-hall':tile.type===13?'turn-hall':tile.type===15?'crossroads-1':undefined;
+    }
+    else if(r.type==='vault'){ tile.type=10;tile.dungeonArt=r.art??'old-vault'; }
+    else if(r.type==='storage'){ tile.type=16;tile.dungeonArt=r.art??'ruined-storage'; }
+    else { tile.type=16;tile.dungeonArt=art; }
+    if(r.snapshot) tile.snapshot=r.snapshot;
+    if(r.chest) crateRooms.add(roomKey(r));
+    if(r.guards>0) posts.push({x:r.x,y:r.y,count:r.guards,target:r.target});
+    tiles.push(tile);
+  }
+  const vaultKey=roomKey(objectiveRoom);
+  if(meta.objective.type==='retrieve') crateRooms.add(vaultKey);
+  let keyKey=null;
+  if(meta.lockedVault&&meta.objective.type==='retrieve'){
+    const pool=[...crateRooms].filter(k=>k!==vaultKey&&k!==roomKey(entranceRoom));
+    if(pool.length) keyKey=pool[Math.floor(Math.random()*pool.length)];
+  }
+  return {rulingName:meta.name,tiles,vaultKey,crateRooms,keyKey,posts};
+}
+async function loadMaps(){
+  const blurb=byId('menu-blurb');
+  try{
+    const response=await fetch('maps/maps.json',{cache:'no-cache'});
+    if(!response.ok) throw new Error('missing');
+    const list=(await response.json()).maps;
+    for(const entry of list){
+      try{
+        const file=await fetch('maps/'+entry.file,{cache:'no-cache'});
+        MAPS.set(entry.id,parseMap(await file.json(),entry.id));
+      }catch(error){ console.warn('Skipped map '+entry.id+': '+error.message); }
+    }
+    registerMaps();
+  }catch{
+    blurb.textContent='Missions could not be loaded. Serve the game over http(s), for example GitHub Pages, so maps/maps.json can be read.';
+  }
+}
+function registerMaps(){
+  missionGroup.replaceChildren();
+  for(const [id,def] of MAPS) if(id!=='dev-draft') missionGroup.append(new Option(def.meta.name,'map:'+id));
+  const devOption=locationSelect.querySelector('option[value="map:dev-draft"]');
+  if(!missionGroup.children.length){ missionGroup.remove();menuLocation.querySelector('optgroup[label="Missions"]')?.remove(); }
+  else{
+    locationSelect.prepend(missionGroup);
+    menuLocation.querySelector('optgroup[label="Missions"]')?.remove();
+    menuLocation.prepend(missionGroup.cloneNode(true));
+    if(!expeditionStarted) menuLocation.selectedIndex=0;
+  }
+  updateBlurb();
+}
+function updateBlurb(){
+  const value=menuLocation.value,blurb=byId('menu-blurb');
+  if(value.startsWith('map:')){
+    const def=MAPS.get(value.slice(4));
+    blurb.textContent=def?`${def.meta.blurb?def.meta.blurb+' ':''}${objectiveText(def.meta.objective)}`:'';
+  } else {
+    const tier=DUNGEON_TIERS.find(t=>t.id===value);
+    blurb.textContent=tier?`Randomized layout. ${objectiveText(tier.objective??{type:'retrieve'})}`:
+      value==='rival'?'A rival keep. Recover the main supply crate and return to the entrance.':'';
+  }
+}
+menuLocation.addEventListener('change',updateBlurb);
+
+// ---- Objectives ----
+function initObjective(def,layout){
+  objective=def;
+  strikes=strikeCooldown=0;failReason='';objectiveDone=false;
+  if(!def) return;
+  if(def.type==='eliminate'||def.type==='stealth'){
+    def.targets=guards.filter(g=>g.target);
+    if(!def.targets.length) def.targets=[...guards];
+  }
+  def.marker=actors.find(a=>a.kind==='objective')??null;
+}
+function objectiveStatus(){
+  if(defeated) return failReason||'Defeated';
+  if(escaped) return 'Expedition ended';
+  if(!objective) return '';
+  const bits=[];
+  if(objectiveDone) bits.push(objective.returnToExit?'Objective complete. Return to the entrance':'Objective complete');
+  else if(objective.targets) bits.push(`Targets ${objective.targets.filter(g=>g.done).length}/${objective.targets.length}`);
+  else if(objective.type==='reach') bits.push(objective.activate?'Activate the terminal':'Reach the marked location');
+  if(objective.type==='stealth') bits.push(`Strikes ${strikes}/${objective.strikes}`);
+  return bits.join(' · ');
+}
+function completeObjective(message){
+  if(objectiveDone) return;
+  objectiveDone=true;
+  recoveredCache=true;
+  if(objective?.alarm) triggerAlarm();
+  sfx('pickup');
+  turn++;
+  if(objective?.returnToExit===false){
+    escaped=true;
+    tell(message+' Mission complete.');
+  } else tell(message+(objective?.alarm?' The alarm is sounding.':'')+' Return to the entrance!');
+}
+function checkObjective(){
+  if(!objective||objectiveDone||defeated||escaped) return;
+  if(objective.targets){
+    if(objective.targets.every(g=>g.done)) completeObjective(objective.targets.length>1?'All targets eliminated.':'Target eliminated.');
+  } else if(objective.type==='reach'&&!objective.activate&&objective.marker){
+    if(Math.hypot(objective.marker.x-player.x,objective.marker.y-player.y)<1.5) completeObjective('Location reached.');
+  }
+}
+// A strike is scored whenever a guard fully notices the player during a stealth mission.
+function registerStrike(guard){
+  if(objective?.type!=='stealth'||objectiveDone||defeated||escaped||strikeCooldown>0) return;
+  strikes++;
+  strikeCooldown=4;
+  runStats.strikes=strikes;
+  turn++;
+  if(strikes>=objective.strikes){
+    defeated=true;
+    failReason='Compromised';
+    tell(`${guard.name} raised the alarm. You were spotted too many times. Mission failed.`);
+  } else tell(`${guard.name} spotted you. Strike ${strikes} of ${objective.strikes}.`);
+}
+
+// ---- Theme: tint, fog, guard roster and a low ambient drone ----
+function applyTheme(){
+  ambientTint=mapTheme?.tint??[1,1,1];
+  fogColor=mapTheme?.fog??'10,13,19';
+  updateDrone();
+}
+function updateDrone(){
+  if(drone){ try{ drone.stop(); }catch{} drone=null; }
+  if(muted||!audio||!mapTheme?.drone||main.hidden||escaped||defeated) return;
+  try{
+    const [freq,type]=mapTheme.drone,now=audio.currentTime;
+    const gain=audio.createGain(),filter=audio.createBiquadFilter();
+    filter.type='lowpass';filter.frequency.value=220;
+    gain.gain.setValueAtTime(.0001,now);gain.gain.linearRampToValueAtTime(.022,now+2);
+    const oscillators=[freq,freq*1.503].map(f=>{
+      const osc=audio.createOscillator();osc.type=type;osc.frequency.value=f;
+      osc.connect(filter);osc.start();return osc;
+    });
+    filter.connect(gain).connect(audio.destination);
+    drone={stop(){ gain.gain.cancelScheduledValues(audio.currentTime);gain.gain.setValueAtTime(gain.gain.value,audio.currentTime);
+      gain.gain.linearRampToValueAtTime(.0001,audio.currentTime+.4);oscillators.forEach(o=>o.stop(audio.currentTime+.5)); }};
+  }catch{ drone=null; }
+}
+
 function restart() {
   clearInput();
   const fieldTest=locationSelect.value==='acid-test';
   const customTest=locationSelect.value==='room-test';
   site=DUNGEON_TIERS.find(tier=>tier.id===(fieldTest?'dungeon-high':locationSelect.value));
+  activeMap=locationSelect.value.startsWith('map:')?(MAPS.get(locationSelect.value.slice(4))??null):null;
+  mapTheme=MAP_THEMES[activeMap?.meta.theme ?? site?.theme]??null;
   let blueprint=FIELD_ROOM;
   if(customTest){
     try{
@@ -796,7 +1112,10 @@ function restart() {
       if(saved) blueprint=playableRoom(saved);
     }catch{/* A damaged local save falls back to the built-in test room. */}
   }
-  const layout = customTest ? fieldRoomLayout(blueprint) : site ? generateDungeon(site) : rival();
+  const layout = customTest ? fieldRoomLayout(blueprint) : site ? generateDungeon(site) : activeMap ? mapLayout(activeMap) : rival();
+  const objDef=(customTest||fieldTest)?null:activeMap?{...activeMap.meta.objective}:site?.objective?normalizeObjective(site.objective):normalizeObjective({type:'retrieve'});
+  const objType=objDef?.type ?? 'none';
+  let objCenter=null;
   const grid = new Map(layout.tiles.map(tile => [roomKey(tile),tile]));
   const originX = Math.min(...layout.tiles.map(t=>t.x));
   const originY = Math.min(...layout.tiles.map(t=>t.y));
@@ -819,8 +1138,8 @@ function restart() {
   for (const t of layout.tiles) {
     const key=roomKey(t), {x,y}=center(t), cx=Math.floor(x), cy=Math.floor(y);
     const hall=t.type>=12 && t.type<=15;
-    const trapName=t.dungeonTrap ?? (!site && t.type===16 && t.y===entrance.y-2 ? 'spikes' : null);
-    const style=trapName ?? (hall?'hall':ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
+    const trapName=t.dungeonTrap ?? (!site && !activeMap && t.type===16 && t.y===entrance.y-2 ? 'spikes' : null);
+    const style=trapName ?? (hall?(mapTheme?.hallStyle??'hall'):ART_STYLE[t.dungeonArt] ?? TYPE_STYLE[t.type]);
     const theme=themes[style] ?? themes.stone;
     roomThemes[t.y-originY][t.x-originX]=theme;
     const roomName=customTest&&t===entrance ? (blueprint.name||'Field Test Starting Room') : theme.id==='acid' ? 'Acid Trap Chamber' : hall ? TYPES[t.type][0] : (DUNGEON_ROOM_ART[t.dungeonArt] ?? TYPES[t.type][0]);
@@ -838,6 +1157,7 @@ function restart() {
         }
       }
       const lanes=customTest?layout.doorwayLanes[t===entrance?d:(d+2)%4]:
+        activeMap?mapDoorLanes(t,neighbor,d):
         Array.from({length:ARCH_WIDTH},(_,i)=>i-ARCH_LEFT);
       for(const lane of lanes){
         const col=cx+dx*boundary+Math.abs(dy)*lane;
@@ -850,16 +1170,18 @@ function restart() {
       }
     }
 
-    if(layout.crateRooms?.has(key) || (!site && !hall && t!==entrance && !customTest)){
+    if(key===vaultKey) objCenter={x,y};
+    if(layout.crateRooms?.has(key) || (!site && !activeMap && !hall && t!==entrance && !customTest)){
       const inset=ROOM_RIGHT-1;
       actors.push({kind:'crate',x:x+inset,y:y+inset,height:.38,radius:.34,
-        bandages:key===vaultKey?2:1,mainCache:key===vaultKey,armor:key===vaultKey?30:0,
-        key:key===layout.keyKey,locked:key===vaultKey&&!!layout.keyKey});
+        bandages:key===vaultKey&&objType==='retrieve'?2:1,mainCache:key===vaultKey&&objType==='retrieve',armor:key===vaultKey&&objType==='retrieve'?30:0,
+        key:key===layout.keyKey,locked:key===vaultKey&&objType==='retrieve'&&!!layout.keyKey});
     }
     if(trapName){
       actors.push({kind:'trap',name:trapName,x,y,height:.06});
     }
     if(customTest && t===entrance) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,blueprint);
+    else if(t.snapshot) placeFieldProps(cx-ROOM_LEFT,cy-ROOM_LEFT,t.snapshot);
     else decorateRoom(theme,x,y);
     if(hall){
       const alongX=!exits(t).some(direction=>direction%2===0);
@@ -883,7 +1205,10 @@ function restart() {
       Math.hypot(a.x-spawn.x,a.y-spawn.y-4)-Math.hypot(b.x-spawn.x,b.y-spawn.y-4));
     if(candidates.length) Object.assign(player,candidates[0]);
   }
-  else actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
+  else{
+    actors.push({kind:'exit',x:spawn.x,y:spawn.y+1.7,height:.67});
+    if(objType==='reach'&&objCenter) actors.push({kind:'objective',x:objCenter.x,y:objCenter.y,height:.6});
+  }
   if(fieldTest){
     const acid=actors.find(a=>a.kind==='trap'&&a.name==='acid');
     Object.assign(player,{x:acid.x,y:acid.y+4.6,angle:-Math.PI/2});
@@ -891,7 +1216,7 @@ function restart() {
   carriedWeapon=null;
   weaponEquipped=false;
   clearWeaponAction();
-  stockChests(site);
+  stockChests(site??(activeMap?{weapons:activeMap.meta.weaponCount}:null));
   pillars=actors.filter(a=>a.kind==='pillar');
   fieldCover=actors.filter(a=>a.halfX!==undefined);
   roomLights=roomThemes.map((row,y)=>row.map((_,x)=>bakeRoomLight(x*ROOM_SPACING,y*ROOM_SPACING)));
@@ -902,19 +1227,23 @@ function restart() {
   hurtDir=null;
   particles.length=0;
   discovered=new Set();
-  runStats={time:0,kills:0,loot:0,damage:0,shots:0,disarmed:0};
+  runStats={time:0,kills:0,loot:0,damage:0,shots:0,disarmed:0,takedowns:0,strikes:0};
   byId('summary').hidden=true;
   escaped=defeated=recoveredCache=false;
   viewmodel=new ViewmodelCombat25D();
   turn=0;
-  guardCount=site?.guards ?? (customTest?3:4);
-  startGuard(guardCount);
+  const spawns=layout.posts?.map(p=>({...center(p),count:p.count,target:p.target}));
+  guardCount=site?.guards ?? activeMap?.meta.guardCount ?? (customTest?3:4);
+  startGuard(guardCount,spawns);
+  initObjective(objDef,layout);
+  applyTheme();
   markDiscovered();
   lastRender=undefined;
   byId('objective').textContent=customTest ? 'Custom Room Field Test · Test cover and movement in the starting room.' : fieldTest ? 'Acid Chamber · Compare the original and smooth finishes from the same spot.' :
-    `${layout.rulingName} · Recover the main supply crate and return to the entrance.`;
+    `${layout.rulingName} · ${objectiveText(objDef)}`;
   if(customTest) tell('Explore the saved room and test its layout.');
   else if(fieldTest) tell('Walk around the pillars and look toward the ceiling lights. Use Acid chamber finish to compare materials.');
+  else if(activeMap?.meta.blurb) tell(activeMap.meta.blurb);
   else tell(site?.locked ? 'A key is hidden somewhere in this dungeon. The main crate is locked.' :
     mobile.matches?'Use Interact to open crates and pick up weapons. Use the right stick to turn.':'Use F to open chests and pick up weapons. Press H to use a bandage.');
 }
@@ -930,8 +1259,11 @@ function targetActor(kinds,range=1.65,requireFacing=true) {
 
 function interact() {
   if(escaped || defeated) return;
-  const a=targetActor(['crate','exit','weapon','trap']);
+  const a=targetActor(['crate','exit','weapon','trap',...(objective?.activate&&!objectiveDone?['objective']:[])]);
   switch(a?.kind){
+    case 'objective':
+      completeObjective('Terminal activated.');
+      break;
     case 'weapon':
       takeWeapon(a);
       break;
@@ -952,9 +1284,7 @@ function interact() {
       sfx('pickup');
       const list=found.join(', ')||'nothing useful';
       if(a.mainCache){
-        recoveredCache=true;
-        triggerAlarm();
-        tell(`Main supplies recovered: ${list}. The alarm is sounding. Reach the entrance!`);
+        completeObjective(`Main supplies recovered: ${list}.`);
       } else if(a.weapon){
         const spec=WEAPONS[a.weapon];
         actors.push({kind:'weapon',x:a.x,y:a.y,height:.29,lift:.40,
@@ -1179,6 +1509,10 @@ sprites.exit=surface(28,32,rect=>{
   rect('#87482a',2,0,24,24); rect('#efcb77',4,2,20,20);
   rect('#2b3028',8,8,12,6); rect('#2b3028',8,6,4,10); rect('#87482a',13,24,3,8);
 });
+sprites.objective=surface(28,32,rect=>{
+  rect('#2a2f38',4,10,20,20);rect('#4a5463',6,12,16,14);rect('#9ad1ff',8,14,12,8);rect('#d8f0ff',9,15,10,2);
+  rect('#2a2f38',12,26,4,4);rect('#9ad1ff',11,3,6,6);rect('#d8f0ff',13,4,2,3);
+});
 const PROP_ART={
   bench:['#6f4f37','#a67b56',[[2,12,28,5],[5,17,4,10],[23,17,4,10]]],
   banner:['#672d38','#d6aa63',[[7,3,18,23],[3,2,26,2],[13,21,6,9]]],
@@ -1228,11 +1562,18 @@ const NPC_ROSTER=[
 ];
 let guards=[], guardFloor, guardWaypoints, guardStrikeGrace=0;
 
-function createGuard(i,x,y,angle){
-  const [id,name,,profile]=NPC_ROSTER[i%NPC_ROSTER.length];
-  const guard={kind:'guard',id,name,x,y,height:.85,angle,
+function rosterEntry(i){
+  const ids=mapTheme?.guards;
+  const entry=ids?NPC_ROSTER.find(e=>e[0]===ids[i%ids.length]):NPC_ROSTER[i%NPC_ROSTER.length];
+  return entry??NPC_ROSTER[i%NPC_ROSTER.length];
+}
+function createGuard(i,x,y,angle,target=false){
+  const [id,baseName,,profile]=rosterEntry(i);
+  const scale=(mapTheme?.hpScale??1)*(target?1.4:1);
+  const name=(mapTheme?.names?.[id]??baseName)+(target?' (target)':'');
+  const guard={kind:'guard',id,name,x,y,height:.85,angle,target,
     wait:1.8+i*.35,path:[],pathIndex:0,waypoint:0,walk:0,moving:false,spotted:false,
-    hp:profile.hp,range:profile.range,patrolSpeed:profile.patrol,chaseSpeed:profile.chase,
+    hp:Math.round(profile.hp*scale),range:profile.range,patrolSpeed:profile.patrol,chaseSpeed:profile.chase,
     melee:profile.melee,ranged:profile.ranged,
     mode:'patrol',lastSeen:null,repath:0,search:0,attackCooldown:0,shotCooldown:0,hitFlash:0,
     alert:0,mapSeen:0,beam:new Float32Array(GUARD_RAYS+1)};
@@ -1241,7 +1582,7 @@ function createGuard(i,x,y,angle){
   refreshGuardBeam(guard);
   return guard;
 }
-function startGuard(count=NPC_ROSTER.length){
+function startGuard(count=NPC_ROSTER.length,spawns=null){
   const cols=room[0].length;
   guardFloor=room.map((row,y)=>row.map((cell,x)=>
     (cell==='.'||cell==='A') && !actors.some(a=>blocksActor(a,x+.5,y+.5,.22))));
@@ -1255,22 +1596,31 @@ function startGuard(count=NPC_ROSTER.length){
   guardStrikeGrace=0;
   const roomsForGuards=guardWaypoints.slice(1);
   const used=new Set();
-  const total=Math.min(count,NPC_ROSTER.length);
-  for(let i=0;i<total;i++){
-    const preferred=roomsForGuards[Math.round(i*(roomsForGuards.length-1)/Math.max(1,total-1))] ?? guardWaypoints[0];
+  // Posts come from the map editor. Without posts the guards spread across the rooms.
+  let plan;
+  if(spawns?.length){
+    plan=spawns.flatMap(post=>Array.from({length:post.count},(_,k)=>({
+      preferred:getPoint(Math.floor(post.x)+','+Math.floor(post.y)),target:post.target&&k===0})));
+  } else {
+    const total=count;
+    plan=Array.from({length:total},(_,i)=>({
+      preferred:roomsForGuards[Math.round(i*(roomsForGuards.length-1)/Math.max(1,total-1))] ?? guardWaypoints[0],target:false}));
+  }
+  plan.forEach(({preferred,target},i)=>{
+    if(preferred===null||preferred===undefined) return;
     const px=preferred%cols,py=Math.floor(preferred/cols);
-    const initial=[[0,0],[2,0],[-2,0],[0,2],[0,-2],[1,0],[-1,0],[0,1],[0,-1]]
+    const initial=[[0,0],[2,0],[-2,0],[0,2],[0,-2],[2,2],[-2,-2],[2,-2],[-2,2],[1,0],[-1,0],[0,1],[0,-1]]
       .map(([dx,dy])=>({x:px+dx,y:py+dy}))
       .filter(({x,y})=>guardFloor[y]?.[x])
       .map(({x,y})=>cellKey(x,y))
       .find(point=>!used.has(point)) ?? roomsForGuards.find(point=>!used.has(point)) ??
       guardFloor.flat().findIndex((walkable,point)=>walkable&&!used.has(point));
-    if(initial<0) continue;
+    if(initial<0) return;
     used.add(initial);
     const x=initial%cols+.5,y=Math.floor(initial/cols)+.5;
-    const guard=createGuard(i,x,y,i===0?Math.atan2(player.y-y,player.x-x):i*Math.PI/2);
+    const guard=createGuard(i,x,y,i===0&&!spawns?.length?Math.atan2(player.y-y,player.x-x):i*Math.PI/2,target);
     guard.waypoint=(guardWaypoints.indexOf(preferred)+1)%guardWaypoints.length;
-  }
+  });
   updateGuardStatus();
 }
 function spawnReinforcements(count){
@@ -1278,7 +1628,7 @@ function spawnReinforcements(count){
   const cols=room[0].length;
   const far=guardWaypoints.map(p=>({p,d:Math.hypot(p%cols+.5-player.x,Math.floor(p/cols)+.5-player.y)}))
     .sort((a,b)=>b.d-a.d).slice(0,4);
-  for(let k=0;k<count&&guards.length<9;k++){
+  for(let k=0;k<count&&guards.length<16;k++){
     const {p}=far[k%far.length];
     const guard=createGuard(guards.length,p%cols+.5,Math.floor(p/cols)+.5,0);
     guard.mode='search';guard.lastSeen={x:player.x,y:player.y};guard.search=10;guard.alert=.6;
@@ -1405,6 +1755,20 @@ function updateGuard(guard,dt){
   guard.repath=Math.max(0,guard.repath-dt);
   const pdx=player.x-guard.x,pdy=player.y-guard.y,pd=Math.hypot(pdx,pdy);
   const sees=guardSeesPlayer(guard);
+  // Patrolling guards that see a fallen guard start searching.
+  if(guard.mode==='patrol'){
+    for(const body of guards){
+      if(!body.done||body.found) continue;
+      const bx=body.x-guard.x,by=body.y-guard.y,bd=Math.hypot(bx,by);
+      if(bd<7&&bd>.05&&guard.fx*bx+guard.fy*by>bd*Math.cos(GUARD_HALF_ANGLE)&&cast(bx,by,null,guard).distance>=1){
+        body.found=true;
+        guard.mode='search';guard.lastSeen={x:body.x,y:body.y};guard.search=6;guard.repath=0;
+        guard.alert=Math.max(guard.alert,.5);
+        tell(`${guard.name} found a body.`);
+        break;
+      }
+    }
+  }
   // Noticing takes time: closer players are noticed faster, and guards already on alert react at once.
   if(sees){
     const rate=guard.mode==='patrol'?.9+2.4*Math.max(0,1-pd/guard.range):9;
@@ -1412,7 +1776,7 @@ function updateGuard(guard,dt){
   } else guard.alert=Math.max(0,guard.alert-dt*.4);
   const aware=sees&&guard.alert>=1;
   if(aware){
-    if(guard.mode!=='pursuit'){ guard.repath=0;sfx('alert'); }
+    if(guard.mode!=='pursuit'){ guard.repath=0;sfx('alert');registerStrike(guard); }
     guard.mode='pursuit';
     guard.lastSeen={x:player.x,y:player.y};
   } else if(guard.mode==='pursuit'){
@@ -1469,7 +1833,7 @@ function updateGuard(guard,dt){
   guard.spotted=!defeated&&sees&&guard.alert>=1;
 }
 
-function hitGuard(dx,dy,limit,damage){
+function hitGuard(dx,dy,limit,damage,melee=false){
   let guard,hit;
   for(const candidate of guards){
     if(candidate.done) continue;
@@ -1477,10 +1841,15 @@ function hitGuard(dx,dy,limit,damage){
     if(contact){guard=candidate;hit=contact;}
   }
   if(!hit) return null;
+  // A fist from behind on an unaware guard is a silent takedown.
+  let silent=false;
+  if(melee&&guard.mode!=='pursuit'&&guard.alert<.4&&guard.fx*(player.x-guard.x)+guard.fy*(player.y-guard.y)<.2){
+    damage=guard.hp;silent=true;
+  }
   guard.hp=Math.max(0,guard.hp-damage);
   guard.hitFlash=.16;
-  spawnParticles(player.x+dx*hit.distance,player.y+dy*hit.distance,.55,[160,22,22],8,1.2);
-  sfx('hit');
+  spawnParticles(player.x+dx*hit.distance,player.y+dy*hit.distance,.55,[160,22,22],silent?3:8,1.2);
+  sfx(silent?'thud':'hit');
   turn++;
   if(!guard.hp){
     guard.done=true;
@@ -1489,8 +1858,9 @@ function hitGuard(dx,dy,limit,damage){
     guard.hitFlash=0;
     guard.spotted=false;
     runStats.kills++;
+    if(silent) runStats.takedowns++;
     updateGuardStatus();
-    tell(`${guard.name} defeated.`);
+    tell(silent?`${guard.name} taken down silently.`:`${guard.name} defeated.`);
   } else {
     guard.mode='search';
     guard.lastSeen={x:player.x,y:player.y};
@@ -1782,9 +2152,9 @@ function renderPlanes(fx,fy,rx,ry,flicker) {
       const sample=((Math.floor(worldY*texScale)&255)*256+(Math.floor(worldX*texScale)&255))*4;
       const glow=cool*flicker;
       const brightness=rowLight*(base+glow*.6)+flash;
-      data[index]=texture[sample]*brightness+glow*6+flash*34;
-      data[index+1]=texture[sample+1]*brightness+glow*13+flash*20;
-      data[index+2]=texture[sample+2]*brightness+glow*22+flash*6;
+      data[index]=texture[sample]*brightness*ambientTint[0]+glow*6+flash*34;
+      data[index+1]=texture[sample+1]*brightness*ambientTint[1]+glow*13+flash*20;
+      data[index+2]=texture[sample+2]*brightness*ambientTint[2]+glow*22+flash*6;
       if(!isFloor && field && glow>.3){
         for(const lamp of field.fixtures){
           const dx=Math.abs(worldX-lamp.x),dy=Math.abs(worldY-lamp.y);
@@ -1934,7 +2304,7 @@ function renderFirstPerson(flicker) {
     const hitX=player.x+(fx+rx*camera)*d, hitY=player.y+(fy+ry*camera)*d;
     const ceilingGlow=ceilingLightAt(hitX-dx*.02,hitY-dy*.02)*flicker;
     const light=(hit.side==='x'?.75:.62)/(1+d*.16)+muzzleFlash*.55/(1+d*.4);
-    ctx.fillStyle=`rgba(10,13,19,${Math.max(0,1-light-ceilingGlow*.33)})`;
+    ctx.fillStyle=`rgba(${fogColor},${Math.max(0,1-light-ceilingGlow*.33)})`;
     ctx.fillRect(x,top,1,h);
     {
       const stain=(Math.sin(hitX*.49)*Math.cos(hitY*.47)+1)*.075;
@@ -1988,6 +2358,13 @@ function renderFirstPerson(flicker) {
       }
       for(const [lo,hi] of parts){
         ctx.drawImage(sprite,sourceX,(lo-top)/h*sprite.height,1,(hi-lo)/h*sprite.height,x,lo,1,hi-lo);
+      }
+    }
+    if(a.kind==='guard'&&a.target&&!a.done){
+      const marker=width/2+lateral*scale;
+      if(marker>=0&&marker<width&&depth[Math.floor(marker)]>d){
+        ctx.fillStyle='#ff5a4a';ctx.strokeStyle='#000a';ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(marker-5,top-13);ctx.lineTo(marker+5,top-13);ctx.lineTo(marker,top-4);ctx.closePath();ctx.fill();ctx.stroke();
       }
     }
     ctx.globalAlpha = 1;
@@ -2465,7 +2842,7 @@ function castMeleeRay(){
   const wall=cast(dx,dy);
   const pillar=tracePillar(dx,dy,pillars,Math.min(1.2,wall.distance));
   const obstacle=pillar?.distance ?? wall.distance;
-  const distance=hitGuard(dx,dy,Math.min(1.2,obstacle),20)?.distance ?? obstacle;
+  const distance=hitGuard(dx,dy,Math.min(1.2,obstacle),20,true)?.distance ?? obstacle;
   if(distance>1.2) return null;
   return {x:player.x+dx*distance,y:player.y+dy*distance};
 }
@@ -2592,6 +2969,7 @@ const SFX={
   alarm(){ for(let i=0;i<4;i++) tone(i%2?520:760,.2,{type:'square',volume:.07,delay:i*.22}); },
   trap(){ burst(.2,{volume:.25,freq:900});tone(70,.2,{type:'sawtooth',volume:.1}); },
   hiss(){ burst(.7,{volume:.12,freq:3500,type:'highpass'}); },
+  thud(){ burst(.07,{volume:.05,freq:260}); },
   step(){ burst(.05,{volume:.05,freq:300}); },
   stepSoft(){ burst(.04,{volume:.02,freq:260}); }
 };
@@ -2602,19 +2980,19 @@ function sfx(name){
   if(audio.state==='suspended') audio.resume();
   SFX[name]?.();
 }
-function setMuted(value){ muted=value;byId('mute').checked=value; }
+function setMuted(value){ muted=value;byId('mute').checked=value;updateDrone(); }
 addEventListener('pointerdown',ensureAudio);
 addEventListener('keydown',ensureAudio);
-byId('mute').onchange=event=>{ muted=event.target.checked; };
+byId('mute').onchange=event=>{ muted=event.target.checked;updateDrone(); };
 
 // End-of-run summary
 function showSummary(){
-  const score=Math.max(0,Math.round((recoveredCache?1000:0)+(escaped?300:0)+runStats.loot*40+runStats.kills*60+
+  const score=Math.max(0,Math.round((recoveredCache?1000:0)+(objective?.type==='stealth'&&recoveredCache?(objective.strikes-strikes)*100:0)+(escaped?300:0)+runStats.loot*40+runStats.kills*60+
     runStats.disarmed*50-runStats.damage*3-Math.floor(runStats.time)*2));
   const minutes=Math.floor(runStats.time/60),seconds=String(Math.floor(runStats.time%60)).padStart(2,'0');
-  byId('summary-title').textContent=defeated?'Defeated':recoveredCache?'Expedition complete':'Withdrew safely';
+  byId('summary-title').textContent=defeated?(failReason||'Defeated'):recoveredCache?'Objective complete':'Withdrew safely';
   const rows=[['Time',`${minutes}:${seconds}`],['Crates opened',runStats.loot],['Guards defeated',runStats.kills],
-    ['Traps disarmed',runStats.disarmed],['Shots fired',runStats.shots],['Damage taken',runStats.damage],['Score',score]];
+    ['Traps disarmed',runStats.disarmed],...(objective?.type==='stealth'?[['Strikes',`${strikes}/${objective.strikes}`],['Silent takedowns',runStats.takedowns]]:[]),['Shots fired',runStats.shots],['Damage taken',runStats.damage],['Score',score]];
   byId('summary-table').replaceChildren(...rows.map(([label,value])=>{
     const row=document.createElement('tr');
     for(const text of [label,String(value)]){ const cell=document.createElement('td');cell.textContent=text;row.append(cell); }
@@ -2727,7 +3105,7 @@ function renderMap(mini=false) {
     }
     if (mini || size<12) {
       if (a.kind!=='trap') {
-        ctx.fillStyle=({crate:a.mainCache?'#d6c884':a.key?'#f5e27a':'#a7b67c',weapon:'#8ed9fa',guard:a.spotted?'#ffab78':'#c1b578',exit:'#84cc91'})[a.kind];
+        ctx.fillStyle=({crate:a.mainCache?'#d6c884':a.key?'#f5e27a':'#a7b67c',weapon:'#8ed9fa',guard:a.target?'#ff5a4a':a.spotted?'#ffab78':'#c1b578',exit:'#84cc91',objective:'#9ad1ff'})[a.kind];
         if(a.done) ctx.fillStyle='#9f967e';
         ctx.beginPath();
         ctx.arc(left+a.x*size,top+a.y*size,Math.max(1.2,size*.32),0,Math.PI*2);
@@ -2869,6 +3247,7 @@ async function enterLandscape(){
   }
 }
 function showMainMenu(){
+  if(drone){ try{ drone.stop(); }catch{} drone=null; }
   if(document.fullscreenElement===main) document.exitFullscreen().catch(()=>{});
   setMenu(false);
   menuLocation.value=[...menuLocation.options].some(o=>o.value===locationSelect.value)?locationSelect.value:menuLocation.options[0].value;
@@ -2881,6 +3260,7 @@ function showMainMenu(){
 function showGame(){
   mainMenu.hidden=true;
   main.hidden=false;
+  updateDrone();
   (mobile.matches && portrait.matches ? byId('portrait-main-menu') : canvas).focus({preventScroll:true});
 }
 startExpedition.onclick=()=>{
@@ -2962,6 +3342,8 @@ function updateWorld(dt,travelled){
   const active=!defeated&&!escaped;
   if(active) runStats.time+=dt;
   markDiscovered();
+  strikeCooldown=Math.max(0,strikeCooldown-dt);
+  checkObjective();
   updateParticles(dt);
   hurtFlash=Math.max(0,hurtFlash-dt);
   shake=Math.max(0,shake-dt*2.2);
@@ -2970,7 +3352,7 @@ function updateWorld(dt,travelled){
     stepTimer-=dt;
     if(stepTimer<=0){ const low=eyeHeight<STANDING_EYE_HEIGHT;stepTimer=low?.7:.42;sfx(low?'stepSoft':'step'); }
   }
-  if((escaped||defeated)&&!summaryShown){ summaryShown=true;showSummary(); }
+  if((escaped||defeated)&&!summaryShown){ summaryShown=true;updateDrone();showSummary(); }
 }
 function frame(now) {
   const dt = Math.min(.033,(now-(previous ?? now))/1000);
@@ -3022,7 +3404,7 @@ function frame(now) {
     `${WEAPONS[item.id].name} ${item.ammo}/${item.reserve}${reloadTime>0?' · Reloading':''}`:
     `Fists (${WEAPONS[carriedWeapon.id].name} stowed)`) : 'Fists';
   byId('position').textContent=`${roomName} · HP ${health}/100 · Armor ${armor} · Bandages ${bandages} · ${equipment}${hasKey?' · Vault key':''}`;
-  byId('inventory').textContent=defeated?'Defeated':escaped?'Expedition ended':recoveredCache?'Main supplies recovered':'';
+  byId('inventory').textContent=objectiveStatus();
   if (mode === 'eye') {
     renderFirstPerson(.985+.012*Math.sin(lightTick*.8));
     renderMap(true);
@@ -3030,12 +3412,14 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 /* DEV:START js (room editor "Save & Test" hook) */
+if(new URLSearchParams(window.location.search).get('dev-draft')==='1') globalThis.devPlayDraft();
 if(new URLSearchParams(window.location.search).get('test-room')==='1'){
   byId('dev-location').value='room-test';
   byId('dev-start').click();
 }
 /* DEV:END js */
 ctx.imageSmoothingEnabled=true;
+loadMaps();
 requestAnimationFrame(frame);
 </script>
 </body>
