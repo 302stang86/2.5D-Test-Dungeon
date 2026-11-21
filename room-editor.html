@@ -469,7 +469,7 @@ function updateTool(){
   byId('prop-info').textContent=prop?
     (isCorner(tool)?'L-shaped · 3 tiles (corner plus one tile each way)':rotation%180===0?prop[2]+' × 1':'1 × '+prop[2])+' · '+cover[prop[3]]+(prop[4]?' · Loot container':'')+(prop[5]?' · Emits light':'')+(tool==='arched_entry'?' · Center anchor · Walk-through opening':''):
     tool==='entrance'?'Select an empty tile along the room edge.':
-    tool==='select'?(selected?propLabel(selected.type)+(moving?' · Choose a destination.':' selected.'):'Select any tile occupied by a prop.'):
+    tool==='select'?(selected?propLabel(selected.type)+(moving?' · Click a tile to move, click the prop again to rotate, Esc to cancel.':' selected.'):'Click any placed prop to pick it up. Then click a tile to move it, or click it again to rotate.'):
     'Select any occupied tile to remove the whole prop or doorway.';
 }
 byId('rotate').onclick=()=>{rotation=isCorner(tool)?(rotation+90)%360:(rotation%180===0?90:0);touchIndex=null;render();};
@@ -571,15 +571,23 @@ function place(index){
   const x=index%size,y=Math.floor(index/size), occupied=occupancy();
   const item=occupied.get(index), door=doors.find(point=>point.x===x&&point.y===y);
   if(moving){
+    if(item===selected){
+      const turned={...selected,rotation:isCorner(selected.type)?(selected.rotation+90)%360:(selected.rotation===0?90:0)};
+      if(!fits(turned,occupied,selected)){say('There is not enough room to rotate this prop here.');return;}
+      replaceSelected(turned,propLabel(turned.type)+' rotated. Click it again to keep rotating, or click a tile to move it.');
+      moving=true;
+      render();
+      return;
+    }
     const next=candidate(index);
     if(!fits(next,occupied,selected)){say('That destination is blocked.');return;}
-    if(next.x===selected.x&&next.y===selected.y){moveButton.onclick();return;}
     replaceSelected(next,propLabel(next.type)+' moved.');
     return;
   }
   if(tool==='select'){
     selected=item??null;
-    say(item?propLabel(item.type)+' selected.':'Select a tile occupied by a prop.');
+    moving=Boolean(item);
+    say(item?propLabel(item.type)+' picked up. Click a tile to move it, click it again to rotate, Esc to cancel.':'Select a tile occupied by a prop.');
     render();
     return;
   }
@@ -653,6 +661,12 @@ grid.onkeydown=event=>{
   const index=Number(button.dataset.index), x=index%size+direction[0], y=Math.floor(index/size)+direction[1];
   if(onGrid(x,y)){selectTile(key(x,y));tiles[focusedTile].focus();showPreview(focusedTile);}
 };
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&(moving||selected)&&!event.target.closest?.('input,select,textarea')){
+    moving=false; selected=null; previewIndex=touchIndex=null;
+    say('Selection cleared.'); render();
+  }
+});
 name.onchange=persist;
 undo.onclick=()=>{
   if(!history.length) return;
